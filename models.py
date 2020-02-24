@@ -135,10 +135,10 @@ class WordEncoder(nn.Module):
 		if self.encoder_type == 'bert':
 			self.encoder = BertModel.from_pretrained('bert-base-uncased')
 
-	def forward(self, x, s_lengths)
-		batch_size, s_len, _ = x.shape
-		mask = getmask_hugging(s_lengths_, batch_size, s_len)
-		word_embedded, _ = self.word_encoder(x_, attention_mask = mask)
+	def forward(self, x, s_lengths):
+		batch_size, s_len = x.shape
+		mask = getmask_hugging(s_lengths, batch_size, s_len)
+		word_embedded, _ = self.encoder(x, attention_mask = mask)
 
 		return word_embedded, mask
 
@@ -159,6 +159,7 @@ class SentenceEncoder(nn.Module):
 		
 		self.attn = Attention(embedding_size, embedding_size, internal_dim=None, need_attn=True)
 		self.query = nn.Linear(1,embedding_size, bias=False)
+
 	
 	def forward(self, word_embedded, mask):
 		ones = torch.ones((word_embedded.shape[0],1),device=word_embedded.device)
@@ -168,10 +169,10 @@ class SentenceEncoder(nn.Module):
 		
 class RNNSentenceEncoder(nn.Module):
 	"""docstring for RNNSentenceEncoder"""
-	def __init__(self, embedding_size, hidden_size, n_layers=1, rnn_type='LSTM', bidirectional=True, dropout=0.3):
+	def __init__(self, input_size, hidden_size, n_layers=1, rnn_type='LSTM', bidirectional=True, dropout=0.3):
 		super(RNNSentenceEncoder, self).__init__()
 		self.rnn_type = rnn_type
-		self.embedding_size = embedding_size
+		self.input_size = input_size
 		self.hidden_size = hidden_size
 		self.n_layers = n_layers
 		self.dropout = dropout
@@ -180,7 +181,7 @@ class RNNSentenceEncoder(nn.Module):
 		
 		self.rnn = getattr(nn, self.rnn_type)(self.input_size, self.hidden_size, self.n_layers, 
 			dropout=self.dropout, bidirectional=self.bidirectional, batch_first=self.batch_first)
-		
+		self.dense = nn.Linear(2*self.hidden_size,self.hidden_size)
 		# self.rnn.apply(init_weights)
 		
 
@@ -206,7 +207,7 @@ class RNNSentenceEncoder(nn.Module):
 			# 	o = torch.zeros_like(outputs[0,:,:])
 			# 	o[:,:self.hidden_size] = outputs[0,:,self.hidden_size:]
 			# 	o[:,self.hidden_size:] = outputs[-1,:,:self.hidden_size]
-		outputs = o
+		outputs = self.dense(o)
 
 		return outputs
 
@@ -231,7 +232,7 @@ class InformedPointer(nn.Module):
 
 		self.rnn = getattr(nn, self.rnn_type)(self.embedding_size, self.embedding_size, self.n_layers, 
 			dropout=self.dropout_value, bidirectional=False)
-		# self.informed_attn = Attention(embedding_size, embedding_size)
+		self.informed_attn = Attention(embedding_size, embedding_size)
 		# self.informed_query = Attention(embedding_size, embedding_size)
 		self.pointer = Attention(embedding_size,embedding_size,need_attn=False)
 	
@@ -252,13 +253,13 @@ class InformedPointer(nn.Module):
 			_, hidden = self.rnn(selected,hidden)
 			
 			# get informred keys
-			# q = hidden[0][-1].unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,self.embedding_size)
-			# s = word_embedded.view(batch_size*p_len,s_len,self.embedding_size)
-			# _, informred = self.informed_attn(q, s) #hidden or selected?
-			# informred = informred.view(batch_size,p_len,self.embedding_size)
-			# informred = informred + sent_embedded
+			q = hidden[0][-1].unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,self.embedding_size)
+			s = word_embedded.view(batch_size*p_len,s_len,self.embedding_size)
+			_, informred = self.informed_attn(q, s) #hidden or selected?
+			informred = informred.view(batch_size,p_len,self.embedding_size)
+			informred = informred + sent_embedded
 
-			informred = sent_embedded
+			# informred = sent_embedded
 		# 	# point to the next index
 			attn_weights = self.pointer(hidden[0][-1], informred, mask=par_mask)[0]
 			# attn_weights = self.pointer(hidden[0][-1], sent_embedded, mask=par_mask)[0]
