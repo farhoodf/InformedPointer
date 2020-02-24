@@ -47,11 +47,11 @@ class FromELMO(nn.Module):
 		elmo_out = self.word_encoder(x)
 		word_embedded = elmo_out['elmo_representations'][0].view(p_len*batch_size, s_len,-1)
 
-		mask = elmo_out['mask'].bool()
+		sent_mask = elmo_out['mask'].bool()
 		word_embedded = self.word_drop(word_embedded)
 
 		# sent_embedded = sent_embedded.view(batch_size, p_len, -1)
-		sent_embedded = self.sentence_encoder(word_embedded, mask=mask.view(p_len*batch_size, s_len))
+		sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask.view(p_len*batch_size, s_len))
 		sent_embedded = self.sent_drop(sent_embedded)
 
 
@@ -61,7 +61,7 @@ class FromELMO(nn.Module):
 		parag_embedded = self.parag_encoder(sent_embedded)
 
 
-		out = self.pointer(parag_embedded, sent_embedded, word_embedded, mask, labels)
+		out = self.pointer(parag_embedded, sent_embedded, word_embedded, sent_mask, labels)
 
 		return out
 
@@ -71,10 +71,11 @@ class FromBert(nn.Module):
 		super(FromBert, self).__init__()
 		self.dropout_value = 0.3
 
-		self.word_encoder = BertModel.from_pretrained('bert-base-uncased')
-		# self.sentence_embedding = Attention(768, 768, internal_dim=None, need_attn=True)
-		# self.sentence_embedding_query = nn.Linear(1,768, bias=False)
-		self.sentence_encoder = SentenceEncoder(768)
+		# self.word_encoder = BertModel.from_pretrained('bert-base-uncased')
+		self.word_encoder = WordEncoder()
+
+		# self.sentence_encoder = SentenceEncoder(768)
+		self.sentence_encoder = RNNSentenceEncoder(768,768)
 		self.parag_encoder = ParagEncoder()
 		self.pointer = InformedPointer()
 		
@@ -87,19 +88,18 @@ class FromBert(nn.Module):
 		#changing view
 		x_ = x.view(p_len*batch_size, s_len)
 		s_lengths_ = s_lengths.view(p_len*batch_size)
-		sent_mask = getmask_hugging(s_lengths_, batch_size*p_len, s_len)
+		# sent_mask = getmask_hugging(s_lengths_, batch_size*p_len, s_len)
 		# sent_mask = None
 
-		# word_embedded, sent_embedded = self.bert(x_, attention_mask = sent_mask)
-		# sent_embedded is the hidden state corresponding to the first token and probably useless
 		# word_embedded: (bs*p_len, s_len, 768)
 		# sent_embedded: (bs*p_len, 768)
 		
-		word_embedded, _ = self.word_encoder(x_, attention_mask = sent_mask)
+		word_embedded, sent_mask = self.word_encoder(x_, s_lengths_)
 		word_embedded = self.word_drop(word_embedded)
 
 		# sent_embedded = sent_embedded.view(batch_size, p_len, -1)
-		sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask)
+		# sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask)
+		sent_embedded = self.sentence_encoder(word_embedded, lengths=s_lengths_)
 		sent_embedded = self.sent_drop(sent_embedded)
 
 
@@ -126,7 +126,21 @@ class FromBert(nn.Module):
 	# 	q = self.sentence_embedding_query(ones)
 	# 	_, sent_embedded = self.sentence_embedding(q, word_embedded, mask=~mask)
 	# 	return sent_embedded
-	
+
+class WordEncoder(nn.Module):
+	"""docstring for WordEncoder"""
+	def __init__(self, encoder_type='bert'):
+		super(WordEncoder, self).__init__()
+		self.encoder_type=encoder_type
+		if self.encoder_type == 'bert':
+			self.encoder = BertModel.from_pretrained('bert-base-uncased')
+
+	def forward(self, x, s_lengths)
+		batch_size, s_len, _ = x.shape
+		mask = getmask_hugging(s_lengths_, batch_size, s_len)
+		word_embedded, _ = self.word_encoder(x_, attention_mask = mask)
+
+		return word_embedded, mask
 
 
 class ParagEncoder(nn.Module):
@@ -152,38 +166,49 @@ class SentenceEncoder(nn.Module):
 		_, sent_embedded = self.attn(q, word_embedded, mask=~mask)
 		return sent_embedded
 		
-# class RNNEncoder(nn.Module):
-# 	"""docstring for RNNEncoder"""
-# 	def __init__(self, n_token, embedding_size, hidden_size, n_layers=1, rnn_type='LSTM', bidirectional=True, dropout=0.3):
-# 		super(RNNEncoder, self).__init__()
-# 		self.rnn_type = rnn_type
-# 		self.n_token = n_token
-# 		self.embedding_size = embedding_size
-# 		self.hidden_size = hidden_size
-# 		self.n_layers = n_layers
-# 		self.dropout = dropout
-# 		self.bidirectional = bidirectional
-# 		self.batch_index = 1 # 0 if batch_first
+class RNNSentenceEncoder(nn.Module):
+	"""docstring for RNNSentenceEncoder"""
+	def __init__(self, embedding_size, hidden_size, n_layers=1, rnn_type='LSTM', bidirectional=True, dropout=0.3):
+		super(RNNSentenceEncoder, self).__init__()
+		self.rnn_type = rnn_type
+		self.embedding_size = embedding_size
+		self.hidden_size = hidden_size
+		self.n_layers = n_layers
+		self.dropout = dropout
+		self.bidirectional = bidirectional
+		self.batch_first = True
 		
-# 		self.rnn = getattr(nn, self.rnn_type)(self.input_size, self.hidden_size, self.n_layers, 
-# 			dropout=self.dropout, bidirectional=self.bidirectional)
+		self.rnn = getattr(nn, self.rnn_type)(self.input_size, self.hidden_size, self.n_layers, 
+			dropout=self.dropout, bidirectional=self.bidirectional, batch_first=self.batch_first)
 		
-# 		self.rnn.apply(init_weights)
+		# self.rnn.apply(init_weights)
 		
 
-# 	def forward(self, inputs, hiddens=None, lengths=None):#, enforce_sorted=True):
-# 		# lengths = None
-# 		bs = inputs.shape[1]
-# 		if lengths is not None:
-# 			inputs = torch.nn.utils.rnn.pack_padded_sequence(inputs, lengths, enforce_sorted=False)
+	def forward(self, inputs, hiddens=None, lengths=None):#, enforce_sorted=True):
+		# lengths = None
+		bs = inputs.shape[1]
+		if lengths is not None:
+			inputs = torch.nn.utils.rnn.pack_padded_sequence(inputs, lengths, 
+						batch_first=self.batch_first, enforce_sorted=False)
 		
-# 		outputs, hiddens = self.rnn(inputs, hiddens)
+		outputs, _ = self.rnn(inputs, hiddens)
 
-# 		if lengths is not None:
-# 			outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(outputs)
+		if lengths is not None:
+			outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(outputs, batch_first=self.batch_first)
 
+		# if self.bidirectional:
+		# 	if self.batch_first
+		o = torch.zeros_like(outputs[:,0,:])
+		o[:,:self.hidden_size] = outputs[:,0,self.hidden_size:]
+		o[:,self.hidden_size:] = outputs[:,-1,:self.hidden_size]
+				
+			# else:
+			# 	o = torch.zeros_like(outputs[0,:,:])
+			# 	o[:,:self.hidden_size] = outputs[0,:,self.hidden_size:]
+			# 	o[:,self.hidden_size:] = outputs[-1,:,:self.hidden_size]
+		outputs = o
 
-# 		return outputs
+		return outputs
 
 		
 	
@@ -206,8 +231,8 @@ class InformedPointer(nn.Module):
 
 		self.rnn = getattr(nn, self.rnn_type)(self.embedding_size, self.embedding_size, self.n_layers, 
 			dropout=self.dropout_value, bidirectional=False)
-		self.informed_attn = Attention(embedding_size, embedding_size)
-		self.informed_query = Attention(embedding_size, embedding_size)
+		# self.informed_attn = Attention(embedding_size, embedding_size)
+		# self.informed_query = Attention(embedding_size, embedding_size)
 		self.pointer = Attention(embedding_size,embedding_size,need_attn=False)
 	
 
@@ -227,13 +252,13 @@ class InformedPointer(nn.Module):
 			_, hidden = self.rnn(selected,hidden)
 			
 			# get informred keys
-			q = hidden[0][-1].unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,self.embedding_size)
-			s = word_embedded.view(batch_size*p_len,s_len,self.embedding_size)
-			_, informred = self.informed_attn(q, s) #hidden or selected?
-			informred = informred.view(batch_size,p_len,self.embedding_size)
-			informred = informred + sent_embedded
+			# q = hidden[0][-1].unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,self.embedding_size)
+			# s = word_embedded.view(batch_size*p_len,s_len,self.embedding_size)
+			# _, informred = self.informed_attn(q, s) #hidden or selected?
+			# informred = informred.view(batch_size,p_len,self.embedding_size)
+			# informred = informred + sent_embedded
 
-
+			informred = sent_embedded
 		# 	# point to the next index
 			attn_weights = self.pointer(hidden[0][-1], informred, mask=par_mask)[0]
 			# attn_weights = self.pointer(hidden[0][-1], sent_embedded, mask=par_mask)[0]
@@ -248,8 +273,8 @@ class InformedPointer(nn.Module):
 			s = word_embedded[torch.arange(batch_size),index]
 			q = hidden[0][-1]
 
-			_, informed_query = self.informed_query(q,s)
-			selected = sent_embedded[torch.arange(batch_size),index] + informed_query
+			# _, informed_query = self.informed_query(q,s)
+			selected = sent_embedded[torch.arange(batch_size),index] #+ informed_query
 			selected = selected.unsqueeze(0)
 
 			par_mask = par_mask.clone().detach()
