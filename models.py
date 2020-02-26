@@ -6,7 +6,7 @@ from torch.nn import init
 from torch.nn.parameter import Parameter
 from allennlp.modules.elmo import Elmo, batch_to_ids
 
-from distilBERT import TransformerEncoder, MultiHeadSelfAttention, FFN, Config
+from distilTransformer import TransformerEncoder, MultiHeadSelfAttention, FFN
 
 options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_options.json" 
 weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_weights.hdf5"
@@ -69,20 +69,19 @@ class FromELMO(nn.Module):
 
 class FromBert(nn.Module):
 	"""docstring for FromBert"""
-	def __init__(self):
+	def __init__(self, config):
 		super(FromBert, self).__init__()
-		self.dropout_value = 0.3
+		self.dropout_value = config.dropout_value
 
-		# self.word_encoder = BertModel.from_pretrained('bert-base-uncased')
-		self.word_encoder = WordEncoder()
+		self.word_encoder = WordEncoder(config.word_encoder_type)
 
 		# self.sentence_encoder = SentenceEncoder(768)
 		# self.sentence_encoder = RNNSentenceEncoder(768,768)
-		self.sentence_encoder = MultiHeadSentenceEncoder()
+		self.sentence_encoder = MultiHeadSentenceEncoder(config.sentence_encoder_conf)
 
 		# self.parag_encoder = ParagEncoder()
-		self.parag_encoder = TransformerParagEncoder()
-		self.pointer = InformedPointer()
+		self.parag_encoder = TransformerParagEncoder(config.parag_encoder_conf)
+		self.pointer = InformedPointer(config.informed_pointer_conf)
 		
 		self.word_drop = nn.Dropout(self.dropout_value)
 		self.sent_drop = nn.Dropout(self.dropout_value)
@@ -145,16 +144,10 @@ class WordEncoder(nn.Module):
 		return word_embedded, mask
 
 
-class ParagEncoder(nn.Module):
-	"""docstring for ParagEncoder"""
-	def __init__(self):
-		super(ParagEncoder, self).__init__()
-		
-	def forward(self, sent_embedded):
-		return sent_embedded.sum(1)
+
 		
 
-class SentenceEncoder(nn.Module):
+class SingleHeadSentenceEncoder(nn.Module):
 	"""docstring for SentenceEncoder"""
 	def __init__(self, embedding_size ):
 		super(SentenceEncoder, self).__init__()
@@ -169,43 +162,6 @@ class SentenceEncoder(nn.Module):
 		_, sent_embedded = self.attn(q, word_embedded, mask=~mask)
 		return sent_embedded
 
-class MultiHeadSentenceEncoder(nn.Module):
-	"""docstring for MultiHeadSentenceEncoder"""
-	def __init__(self,):
-		super(MultiHeadSentenceEncoder, self).__init__()
-		conf = 	Config()
-		self.encoder = MultiHeadAttention(conf)
-		self.query = nn.Linear(1, conf.dim, bias=False)
-
-	def forward(self, word_embedded, mask):
-		ones = torch.ones((word_embedded.shape[0],1,1),device=word_embedded.device)
-		q = self.query(ones)
-		sent_embedded = self.encoder(q, word_embedded, mask)[0]
-		sent_embedded = sent_embedded.squeeze(1)
-		return sent_embedded
-		
-class TransformerParagEncoder(nn.Module):
-	"""docstring for TransformerParagEncoder"""
-	def __init__(self):
-		super(TransformerParagEncoder, self).__init__()
-		conf = 	Config()
-		self.encoder = MultiHeadAttention(conf)
-		self.query = nn.Linear(1, conf.dim, bias=False)
-		self.transformer = TransformerEncoder(conf)
-
-	def forward(self, sent_embedded, mask=None):
-		if mask is None:
-			bs, p_len, _ = sent_embedded.shape
-			mask = torch.ones(bs, p_len).to(device=sent_embedded.device)
-
-		sent_embedded = self.transformer(sent_embedded, mask)[0]
-
-		ones = torch.ones((sent_embedded.shape[0],1,1),device=sent_embedded.device)
-		q = self.query(ones)
-		parag_embedded = self.encoder(q, sent_embedded, mask)[0]
-		parag_embedded = parag_embedded.squeeze(1)
-		return parag_embedded, sent_embedded
-		
 class RNNSentenceEncoder(nn.Module):
 	"""docstring for RNNSentenceEncoder"""
 	def __init__(self, input_size, hidden_size, n_layers=1, rnn_type='LSTM', bidirectional=True, dropout=0.3):
@@ -248,6 +204,55 @@ class RNNSentenceEncoder(nn.Module):
 		outputs = self.dense(o)
 
 		return outputs
+
+class MultiHeadSentenceEncoder(nn.Module):
+	"""docstring for MultiHeadSentenceEncoder"""
+	def __init__(self, config):
+		super(MultiHeadSentenceEncoder, self).__init__()
+		self.config = config
+		self.encoder = MultiHeadAttention(self.config.multihead_conf)
+		self.query = nn.Linear(1, self.config.multihead_conf.dim, bias=False)
+
+	def forward(self, word_embedded, mask):
+		ones = torch.ones((word_embedded.shape[0],1,1),device=word_embedded.device)
+		q = self.query(ones)
+		sent_embedded = self.encoder(q, word_embedded, mask)[0]
+		sent_embedded = sent_embedded.squeeze(1)
+		return sent_embedded
+		
+class TransformerParagEncoder(nn.Module):
+	"""docstring for TransformerParagEncoder"""
+	def __init__(self, config):
+		super(TransformerParagEncoder, self).__init__()
+
+		
+		self.query = nn.Linear(1, config.multihead_conf.dim, bias=False)
+		self.transformer = TransformerEncoder(config.transformer)
+		self.encoder = MultiHeadAttention(config.multihead_conf)
+
+	def forward(self, sent_embedded, mask=None):
+		if mask is None:
+			bs, p_len, _ = sent_embedded.shape
+			mask = torch.ones(bs, p_len).to(device=sent_embedded.device)
+
+		sent_embedded = self.transformer(sent_embedded, mask)[0]
+
+		ones = torch.ones((sent_embedded.shape[0],1,1),device=sent_embedded.device)
+		q = self.query(ones)
+		parag_embedded = self.encoder(q, sent_embedded, mask)[0]
+		parag_embedded = parag_embedded.squeeze(1)
+		return parag_embedded, sent_embedded
+
+class AvgParagEncoder(nn.Module):
+	"""docstring for ParagEncoder"""
+	def __init__(self):
+		super(ParagEncoder, self).__init__()
+		
+	def forward(self, sent_embedded):
+		return sent_embedded.sum(1)
+
+
+
 	
 	
 class InformedPointer(nn.Module):
@@ -258,27 +263,30 @@ class InformedPointer(nn.Module):
 	sent_embedded	()
 	word_embedded	(bs,slen,emsize)
 	"""
-	def __init__(self, embedding_size = 768):
+	def __init__(self, config):
 		super(InformedPointer, self).__init__()
+		embedding_size = 768
 		self.rnn_type = 'LSTM'
-		self.embedding_size = embedding_size
-		self.rnn_hidden_size = 512
-		self.n_layers = 1
-		self.dropout_value = 0.3
+		self.embedding_dim = config.pointer_dim
+		self.rnn_hidden_size = config.rnn_hidden_size
+		self.rnn_n_layers = config.rnn_n_layers
+		self.rnn_dropout_value = config.rnn_dropout_value
+		self.dropout_value = config.dropout_value
 
 
 
-		self.rnn = getattr(nn, self.rnn_type)(self.embedding_size, self.embedding_size, self.n_layers, 
-			dropout=self.dropout_value, bidirectional=False)
-		self.hidden_drop = nn.Dropout(self.dropout_value)
+		self.rnn = getattr(nn, self.rnn_type)(self.embedding_dim, self.rnn_hidden_size, self.rnn_n_layers, 
+			dropout=self.rnn_dropout_value, bidirectional=False)
+		
+		self.after_rnn_drop = nn.Dropout(self.dropout_value)
 
-		# self.informed_attn = Attention(embedding_size, embedding_size)
-		# self.informed_query = Attention(embedding_size, embedding_size)
-		self.pointer = Attention(embedding_size,embedding_size,need_attn=False)
-		conf = 	Config()
-		self.informed_attn = MultiHeadAttention(conf)
+		# self.informed_attn = Attention(embedding_dim, embedding_dim)
+		# self.informed_query = Attention(embedding_dim, embedding_dim)
+		self.informed_attn = MultiHeadAttention(config.informed_attention_config)
 
-	def forward(self, parag_embedded, sent_embedded, word_embedded, sent_mask, labels):
+		self.pointer = Attention(self.embedding_dim, self.embedding_dim,need_attn=False)
+		
+	def forward(self, parag_embedded, sent_embedded, word_embedded, sent_mask, labels=None):
 		batch_size, p_len, s_len, _ = word_embedded.shape
 		if self.training:
 			do_tf = True 
@@ -292,14 +300,14 @@ class InformedPointer(nn.Module):
 		par_mask = torch.zeros((batch_size, p_len), dtype=bool, device= word_embedded.device, requires_grad=False)
 		for i in range(p_len):
 			_, hidden = self.rnn(selected,hidden)
-			hidden = (self.hidden_drop(hidden[0]), self.hidden_drop(hidden[1]))
+			hidden = (self.after_rnn_drop(hidden[0]), self.after_rnn_drop(hidden[1]))
 			
 			# get informred keys
-			q = hidden[0][-1].unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,1,self.embedding_size)
-			s = word_embedded.view(batch_size*p_len,s_len,self.embedding_size)
+			q = hidden[0][-1].unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,1,self.rnn_hidden_size)
+			s = word_embedded.view(batch_size*p_len,s_len,self.embedding_dim)
 			# _, informred = self.informed_attn(q, s) #hidden or selected? # single head
 			informred = self.informed_attn(q, s, sent_mask)[0] #hidden or selected?
-			informred = informred.view(batch_size,p_len,self.embedding_size)
+			informred = informred.view(batch_size,p_len,self.embedding_dim)
 			# informred = informred + sent_embedded
 
 			# informred = sent_embedded
@@ -332,9 +340,16 @@ class InformedPointer(nn.Module):
 	def init_hidden(self, batch_size,device):
 		# num_layers * num_directions, batch, hidden_size
 		if self.rnn_type =='LSTM':
-			h_n = torch.zeros(self.n_layers, batch_size, self.embedding_size,device=device)
-			c_n = torch.zeros(self.n_layers, batch_size, self.embedding_size,device=device)
+			h_n = torch.zeros(self.rnn_n_layers, batch_size, self.rnn_hidden_size,device=device)
+			c_n = torch.zeros(self.rnn_n_layers, batch_size, self.rnn_hidden_size,device=device)
 			return (h_n, c_n)
+
+class InformedTransformer(nn.Module):
+	"""docstring for InformedTransformer"""
+	def __init__(self, arg):
+		super(InformedTransformer, self).__init__()
+		self.arg = arg
+		
 
 class MultiHeadAttention(nn.Module):
 	"""docstring for MultiHeadAttention"""
@@ -426,7 +441,8 @@ class Attention(nn.Module):
 		# mask can be applied here to put very low value for energy
 
 		attn_weights = F.softmax(energy,dim=1)
-
+		# if mask is not None:
+		# 	attn_weights.masked_fill_(mask, 0)
 		out = (attn_weights,)
 
 		if self.need_attn:
