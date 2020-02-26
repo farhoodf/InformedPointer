@@ -6,6 +6,8 @@ from torch.nn import init
 from torch.nn.parameter import Parameter
 from allennlp.modules.elmo import Elmo, batch_to_ids
 
+from distilBERT import TransformerEncoder, MultiHeadSelfAttention, FFN, Config
+
 options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_options.json" 
 weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_weights.hdf5"
 
@@ -75,8 +77,11 @@ class FromBert(nn.Module):
 		self.word_encoder = WordEncoder()
 
 		# self.sentence_encoder = SentenceEncoder(768)
-		self.sentence_encoder = RNNSentenceEncoder(768,768)
-		self.parag_encoder = ParagEncoder()
+		# self.sentence_encoder = RNNSentenceEncoder(768,768)
+		self.sentence_encoder = MultiHeadSentenceEncoder()
+
+		# self.parag_encoder = ParagEncoder()
+		self.parag_encoder = TransformerParagEncoder()
 		self.pointer = InformedPointer()
 		
 		self.word_drop = nn.Dropout(self.dropout_value)
@@ -98,8 +103,9 @@ class FromBert(nn.Module):
 		word_embedded = self.word_drop(word_embedded)
 
 		# sent_embedded = sent_embedded.view(batch_size, p_len, -1)
-		# sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask)
-		sent_embedded = self.sentence_encoder(word_embedded, lengths=s_lengths_)
+		# sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask) # single head
+		# sent_embedded = self.sentence_encoder(word_embedded, lengths=s_lengths_) # rnn
+		sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask) # multihead
 		sent_embedded = self.sent_drop(sent_embedded)
 
 
@@ -112,7 +118,8 @@ class FromBert(nn.Module):
 
 		
 		
-		parag_embedded = self.parag_encoder(sent_embedded)
+		# parag_embedded = self.parag_encoder(sent_embedded)
+		parag_embedded, sent_embedded = self.parag_encoder(sent_embedded)
 		# parag_embedded: (bs, em)
 
 		out = self.pointer(parag_embedded, sent_embedded, word_embedded, sent_mask, labels)
@@ -120,12 +127,7 @@ class FromBert(nn.Module):
 		return out
 
 
-	# def get_sentence_embedding(self, word_embedded, mask):
-	# 	# return word_embedded.sum(dim=2)
-	# 	ones = torch.ones((word_embedded.shape[0],1),device=word_embedded.device)
-	# 	q = self.sentence_embedding_query(ones)
-	# 	_, sent_embedded = self.sentence_embedding(q, word_embedded, mask=~mask)
-	# 	return sent_embedded
+
 
 class WordEncoder(nn.Module):
 	"""docstring for WordEncoder"""
@@ -166,6 +168,43 @@ class SentenceEncoder(nn.Module):
 		q = self.query(ones)
 		_, sent_embedded = self.attn(q, word_embedded, mask=~mask)
 		return sent_embedded
+
+class MultiHeadSentenceEncoder(nn.Module):
+	"""docstring for MultiHeadSentenceEncoder"""
+	def __init__(self,):
+		super(MultiHeadSentenceEncoder, self).__init__()
+		conf = 	Config()
+		self.encoder = MultiHeadAttention(conf)
+		self.query = nn.Linear(1, conf.dim, bias=False)
+
+	def forward(self, word_embedded, mask):
+		ones = torch.ones((word_embedded.shape[0],1,1),device=word_embedded.device)
+		q = self.query(ones)
+		sent_embedded = self.encoder(q, word_embedded, mask)[0]
+		sent_embedded = sent_embedded.squeeze(1)
+		return sent_embedded
+		
+class TransformerParagEncoder(nn.Module):
+	"""docstring for TransformerParagEncoder"""
+	def __init__(self):
+		super(TransformerParagEncoder, self).__init__()
+		conf = 	Config()
+		self.encoder = MultiHeadAttention(conf)
+		self.query = nn.Linear(1, conf.dim, bias=False)
+		self.transformer = TransformerEncoder(conf)
+
+	def forward(self, sent_embedded, mask=None):
+		if mask is None:
+			bs, p_len, _ = sent_embedded.shape
+			mask = torch.ones(bs, p_len).to(device=sent_embedded.device)
+
+		sent_embedded = self.transformer(sent_embedded, mask)[0]
+
+		ones = torch.ones((sent_embedded.shape[0],1,1),device=sent_embedded.device)
+		q = self.query(ones)
+		parag_embedded = self.encoder(q, sent_embedded, mask)[0]
+		parag_embedded = parag_embedded.squeeze(1)
+		return parag_embedded, sent_embedded
 		
 class RNNSentenceEncoder(nn.Module):
 	"""docstring for RNNSentenceEncoder"""
@@ -187,7 +226,6 @@ class RNNSentenceEncoder(nn.Module):
 
 	def forward(self, inputs, hiddens=None, lengths=None):#, enforce_sorted=True):
 		# lengths = None
-		bs = inputs.shape[1]
 		if lengths is not None:
 			inputs = torch.nn.utils.rnn.pack_padded_sequence(inputs, lengths, 
 						batch_first=self.batch_first, enforce_sorted=False)
@@ -210,8 +248,7 @@ class RNNSentenceEncoder(nn.Module):
 		outputs = self.dense(o)
 
 		return outputs
-
-		
+	
 	
 class InformedPointer(nn.Module):
 	"""docstring for InformedPointer
@@ -230,12 +267,16 @@ class InformedPointer(nn.Module):
 		self.dropout_value = 0.3
 
 
+
 		self.rnn = getattr(nn, self.rnn_type)(self.embedding_size, self.embedding_size, self.n_layers, 
 			dropout=self.dropout_value, bidirectional=False)
-		self.informed_attn = Attention(embedding_size, embedding_size)
+		self.hidden_drop = nn.Dropout(self.dropout_value)
+
+		# self.informed_attn = Attention(embedding_size, embedding_size)
 		# self.informed_query = Attention(embedding_size, embedding_size)
 		self.pointer = Attention(embedding_size,embedding_size,need_attn=False)
-	
+		conf = 	Config()
+		self.informed_attn = MultiHeadAttention(conf)
 
 	def forward(self, parag_embedded, sent_embedded, word_embedded, sent_mask, labels):
 		batch_size, p_len, s_len, _ = word_embedded.shape
@@ -251,13 +292,15 @@ class InformedPointer(nn.Module):
 		par_mask = torch.zeros((batch_size, p_len), dtype=bool, device= word_embedded.device, requires_grad=False)
 		for i in range(p_len):
 			_, hidden = self.rnn(selected,hidden)
+			hidden = (self.hidden_drop(hidden[0]), self.hidden_drop(hidden[1]))
 			
 			# get informred keys
-			q = hidden[0][-1].unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,self.embedding_size)
+			q = hidden[0][-1].unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,1,self.embedding_size)
 			s = word_embedded.view(batch_size*p_len,s_len,self.embedding_size)
-			_, informred = self.informed_attn(q, s) #hidden or selected?
+			# _, informred = self.informed_attn(q, s) #hidden or selected? # single head
+			informred = self.informed_attn(q, s, sent_mask)[0] #hidden or selected?
 			informred = informred.view(batch_size,p_len,self.embedding_size)
-			informred = informred + sent_embedded
+			# informred = informred + sent_embedded
 
 			# informred = sent_embedded
 		# 	# point to the next index
@@ -292,6 +335,56 @@ class InformedPointer(nn.Module):
 			h_n = torch.zeros(self.n_layers, batch_size, self.embedding_size,device=device)
 			c_n = torch.zeros(self.n_layers, batch_size, self.embedding_size,device=device)
 			return (h_n, c_n)
+
+class MultiHeadAttention(nn.Module):
+	"""docstring for MultiHeadAttention"""
+	def __init__(self, config):
+		super(MultiHeadAttention, self).__init__()
+		self.output_attentions = config.output_attentions
+
+		assert config.dim % config.n_heads == 0
+
+		self.attention = MultiHeadSelfAttention(config)
+		self.sa_layer_norm = nn.LayerNorm(normalized_shape=config.dim, eps=1e-12)
+
+		self.ffn = FFN(config)
+		self.output_layer_norm = nn.LayerNorm(normalized_shape=config.dim, eps=1e-12)
+
+
+	def forward(self, query, states, attn_mask=None, head_mask=None):
+		"""
+		Parameters
+		----------
+		query: torch.tensor(bs, seq_length, dim)
+		states: torch.tensor(bs, seq_length, dim)
+		attn_mask: torch.tensor(bs, seq_length)
+
+		Outputs
+		-------
+		sa_weights: torch.tensor(bs, n_heads, seq_length, seq_length)
+			The attention weights
+		ffn_output: torch.tensor(bs, seq_length, dim)
+			The output of the transformer block contextualization.
+		"""
+
+		sa_output = self.attention(query=query, key=states, value=states, mask=attn_mask, head_mask=head_mask)
+		if self.output_attentions:
+			sa_output, sa_weights = sa_output  # (bs, seq_length, dim), (bs, n_heads, seq_length, seq_length)
+		else:  # To handle these `output_attention` or `output_hidden_states` cases returning tuples
+			assert type(sa_output) == tuple
+			sa_output = sa_output[0]
+
+		# sa_output = self.sa_layer_norm(sa_output + x)  # (bs, seq_length, dim)
+
+		# Feed Forward Network
+		ffn_output = self.ffn(sa_output)  # (bs, seq_length, dim)
+		ffn_output = self.output_layer_norm(ffn_output + sa_output)  # (bs, seq_length, dim)
+
+		output = (ffn_output,)
+		if self.output_attentions:
+			output = (sa_weights,) + output
+		return output
+		
 
 
 class Attention(nn.Module):
