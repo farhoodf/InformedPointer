@@ -38,3 +38,4 @@ class AverageMeter(object):
 	def draw_fig(self, path):
 		plt.plot(self.values)
 		plt.savefig(path)
+		plt.clf()
