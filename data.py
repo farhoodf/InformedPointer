@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 import json
-from config import conf
+from config import token_config
 import nltk
 import pandas as pd
 from multiprocessing import Pool
@@ -16,8 +16,14 @@ from allennlp.modules.elmo import batch_to_ids
 
 class AbstractData(Dataset):
 	"""docstring for AbstractData"""
-	def __init__(self,):
+	def __init__(self, path, tokenizer=None):
 		super(AbstractData, self).__init__()
+		self.data = []
+		self.path = path
+		self.__load_data__()
+
+		if tokenizer is not None:
+			self.tokenize(tokenizer)
 	
 	def __len__(self):
 		return len(self.data)
@@ -44,26 +50,37 @@ class AbstractData(Dataset):
 class SIND(AbstractData):
 	"""docstring for SIND"""
 	def __init__(self, path, tokenizer=None):
-		super(SIND, self).__init__()
-		self.data = []
-		self.path = path
-		self.__load_data__()
+		super(SIND, self).__init__(path, tokenizer)
 
-		if tokenizer is not None:
-			self.tokenize(tokenizer)
 	
 	def __load_data__(self):
 		with open(self.path,'r') as f:
 			raw = json.load(f)
 		for key in raw:
 			raw_sample = raw[key]
-			sample = [conf['first_sent']]+[raw[key][str(i)]['original_text'] for i in range(len(raw_sample))]#+[[conf['last_sent']]]
+			# sample = [token_config['first_sent']]+[raw[key][str(i)]['original_text'] for i in range(len(raw_sample))]#+[[token_config['last_sent']]]
+			sample = [raw[key][str(i)]['original_text'] for i in range(len(raw_sample))]#+[[token_config['last_sent']]]
 
 			labels = list(range(len(sample)))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
 
 			# self.data = self.data[:1000]
+class ROC(AbstractData):
+	"""docstring for ROC"""
+	def __init__(self, path, tokenizer=None):
+		super(ROC, self).__init__(path, tokenizer)
+	
+	def __load_data__(self):
 
+		dataFrame = pd.read_csv(self.path,error_bad_lines=False)
+		raw = dataFrame.values
+		for i in range(raw.shape[0]):
+			sample = raw[i,2:]
+			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
+			labels = list(range(len(sample)))
+			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
+
+			# self.data = self.data[:1000]
 
 
 class Synthetic(AbstractData):
@@ -83,10 +100,10 @@ class Synthetic(AbstractData):
 			sample = sample.strip().split('\n')
 			if len(sample) < 2:
 				continue
-			sample = [[conf['first_sent']]] + sample
+			sample = [[token_config['first_sent']]] + sample
 			# raw_sample = raw[key]
-			# sample = [[conf['first_sent']]]+[raw[key][str(i)]['text'] for i in range(len(raw_sample))]+[[conf['last_sent']]]
-			# sample = [[conf['first_sent']]]+[raw[key][str(i)]['original_text'] for i in range(len(raw_sample))]#+[[conf['last_sent']]]
+			# sample = [[token_config['first_sent']]]+[raw[key][str(i)]['text'] for i in range(len(raw_sample))]+[[token_config['last_sent']]]
+			# sample = [[token_config['first_sent']]]+[raw[key][str(i)]['original_text'] for i in range(len(raw_sample))]#+[[token_config['last_sent']]]
 
 
 
