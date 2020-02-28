@@ -35,7 +35,10 @@ class AverageMeter(object):
 		with open(path,'w') as f:
 			for i in range(len(self.values)):
 				f.write(str(i+1).zfill(3)+' '+str(self.values[i])+'\n')
-	def draw_fig(self, path):
-		plt.plot(self.values)
+	def draw_fig(self, path, refresh=True, label=''):
+		if refresh:
+			plt.clf()
+		plt.plot(self.values,label=label)
+		plt.legend()
 		plt.savefig(path)
-		plt.clf()
+		
