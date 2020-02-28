@@ -285,13 +285,17 @@ class InformedPointer(nn.Module):
 		self.informed_attn = MultiHeadAttention(config.informed_attention_config)
 
 		self.pointer = Attention(self.embedding_dim, self.embedding_dim,need_attn=False)
+
+		self.informed_layernorm = nn.LayerNorm(normalized_shape=self.embedding_dim, eps=1e-12)
 		
 	def forward(self, parag_embedded, sent_embedded, word_embedded, sent_mask, labels=None):
 		batch_size, p_len, s_len, _ = word_embedded.shape
 		if self.training:
 			do_tf = True 
+			do_mask = False
 		else:
 			do_tf = False
+			do_mask = True
 		
 		res = []
 		hidden = self.init_hidden(batch_size,parag_embedded.device)
@@ -309,6 +313,7 @@ class InformedPointer(nn.Module):
 			informred = self.informed_attn(q, s, sent_mask)[0] #hidden or selected?
 			informred = informred.view(batch_size,p_len,self.embedding_dim)
 			# informred = informred + sent_embedded
+			informred = self.informed_layernorm(informred+sent_embedded)
 
 			# informred = sent_embedded
 		# 	# point to the next index
@@ -329,8 +334,9 @@ class InformedPointer(nn.Module):
 			selected = sent_embedded[torch.arange(batch_size),index] #+ informed_query
 			selected = selected.unsqueeze(0)
 
-			par_mask = par_mask.clone().detach()
-			par_mask[torch.arange(batch_size),index] = 1
+			if do_mask:
+				par_mask = par_mask.clone().detach()
+				par_mask[torch.arange(batch_size),index] = 1
 
 
 			res.append(attn_weights)
