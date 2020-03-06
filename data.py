@@ -9,14 +9,15 @@ import pandas as pd
 from multiprocessing import Pool
 import re
 
-from transformers import BertTokenizer
+from transformers import BertTokenizer, DistilBertTokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+# tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-cased')
 from allennlp.modules.elmo import batch_to_ids
 
 
 class AbstractData(Dataset):
 	"""docstring for AbstractData"""
-	def __init__(self, path, tokenizer=None):
+	def __init__(self, path, tokenizer=None, w_to_id=None):
 		super(AbstractData, self).__init__()
 		self.data = []
 		self.path = path
@@ -24,6 +25,8 @@ class AbstractData(Dataset):
 
 		if tokenizer is not None:
 			self.tokenize(tokenizer)
+		if w_to_id is not None:
+			self.vectorize_dic(w_to_id)
 	
 	def __len__(self):
 		return len(self.data)
@@ -37,20 +40,20 @@ class AbstractData(Dataset):
 			for j in range(self.data[i]['p_len']):
 
 				self.data[i]['text'][j] = tokenizer(self.data[i]['text'][j])
-				self.data[i]['s_len'].append(len(self.data[i]['text'][-1]))
+				self.data[i]['s_len'].append(len(self.data[i]['text'][j]))
 	
 	def vectorize_dic(self, w_to_id):
-		for i in range(self.data):
+		for i in range(len(self.data)):
 			self.data[i]['vectorized'] = []
 			for j in range(self.data[i]['p_len']):
 				self.data[i]['vectorized'].append([])
 				for k in range(self.data[i]['s_len'][j]):
-					self.data[i]['vectorized'][j].append(w_to_id[self.data[i]['text'][j][k]])
-
+					self.data[i]['vectorized'][j].append(w_to_id.get(self.data[i]['text'][j][k],w_to_id[token_config['unknown']]))
+				self.data[i]['vectorized'][j] = torch.tensor(self.data[i]['vectorized'][j])
 class SIND(AbstractData):
 	"""docstring for SIND"""
-	def __init__(self, path, tokenizer=None):
-		super(SIND, self).__init__(path, tokenizer)
+	def __init__(self, path, tokenizer=None, w_to_id=None):
+		super(SIND, self).__init__(path, tokenizer, w_to_id)
 
 	
 	def __load_data__(self):
@@ -62,13 +65,15 @@ class SIND(AbstractData):
 			sample = [raw[key][str(i)]['original_text'] for i in range(len(raw_sample))]#+[[token_config['last_sent']]]
 
 			labels = list(range(len(sample)))
+			# labels = list(range(len(sample)-1,-1,-1))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
 
 			# self.data = self.data[:1000]
+
 class ROC(AbstractData):
 	"""docstring for ROC"""
-	def __init__(self, path, tokenizer=None):
-		super(ROC, self).__init__(path, tokenizer)
+	def __init__(self, path, tokenizer=None, w_to_id=None):
+		super(ROC, self).__init__(path, tokenizer, w_to_id)
 	
 	def __load_data__(self):
 
@@ -78,6 +83,7 @@ class ROC(AbstractData):
 			sample = raw[i,2:]
 			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
 			labels = list(range(len(sample)))
+			# labels = list(range(len(sample)-1,-1,-1))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
 
 			# self.data = self.data[:1000]
@@ -150,7 +156,7 @@ def bert_batchify(batch):
 		shuffled_indices = torch.randperm(p_lens[i])
 		data[i] = [data[i][k] for k in shuffled_indices]
 		s_lengths[i] = [s_lengths[i][k] for k in shuffled_indices]
-		padded_labels[i,:p_lens[i]] = torch.argsort(shuffled_indices)
+		padded_labels[i,:p_lens[i]] = torch.argsort(shuffled_indices)#,descending=True)
 		text[i] = [text[i][k] for k in shuffled_indices]
 
 		for j in range(p_lens[i]):
@@ -170,6 +176,7 @@ def elmo_batchify(batch):
 	p_lens = []
 	max_sent_len = []
 	text = []
+	vectorized = []
 
 	for sample in batch:
 		# d = []
@@ -180,6 +187,7 @@ def elmo_batchify(batch):
 		s_lengths.append(sample['s_len'])
 		data.append(d)
 		labels.append(sample['labels'])
+		vectorized.append(sample['vectorized'])
 		
 		p_lens.append(d.shape[0])
 		max_sent_len.append(d.shape[1])
@@ -189,6 +197,7 @@ def elmo_batchify(batch):
 	padded_data = torch.zeros((batch_size,p_len,s_len,50),dtype=torch.long)
 	padded_lengths = torch.ones((batch_size,p_len),dtype=torch.long)
 	padded_labels = torch.zeros((batch_size,p_len),dtype=torch.long)
+	padded_vectorized = torch.zeros((batch_size,p_len,s_len),dtype=torch.long)
 	for i in range(batch_size):
 		shuffled_indices = torch.randperm(p_lens[i])
 		# data[i] = [data[i][k] for k in shuffled_indices]
@@ -198,8 +207,9 @@ def elmo_batchify(batch):
 
 		for j in range(p_lens[i]):
 			padded_data[i,j,:max_sent_len[i]] = data[i][shuffled_indices[j]]
+			padded_vectorized[i,j,:s_lengths[i][j]] = vectorized[i][shuffled_indices[j]]
 			padded_lengths[i,j] = s_lengths[i][j]
 
 
 	return {'data':padded_data,'s_lengths':padded_lengths, 'labels': padded_labels,
-			'p_lengths':torch.tensor(p_lens), 'text':text}
+			'p_lengths':torch.tensor(p_lens), 'text':text,'vectorized':padded_vectorized}

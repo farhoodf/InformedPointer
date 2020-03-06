@@ -8,8 +8,6 @@ from allennlp.modules.elmo import Elmo, batch_to_ids
 
 from distilTransformer import TransformerEncoder, MultiHeadSelfAttention, FFN
 
-options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_options.json" 
-weight_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_weights.hdf5"
 
 
 def getmask_hugging(s_lengths, batch_size, s_len):
@@ -23,44 +21,61 @@ def getmask_hugging(s_lengths, batch_size, s_len):
 	mask = ~mask.cumsum(dim=1).bool().to(device=s_lengths.device)
 	return mask[:,:-1]
 
+
 class FromELMO(nn.Module):
 	"""docstring for FromELMO"""
-	def __init__(self):
+	def __init__(self,config, vectors=None):
 		super(FromELMO, self).__init__()
-		self.dropout_value = 0.3
+		self.dropout_value = config.dropout_value
 
 		# self.word_encoder = BertModel.from_pretrained('bert-base-uncased')
-		self.word_encoder = Elmo(options_file, weight_file, 1, dropout=self.dropout_value)
-		self.sentence_encoder = SentenceEncoder(256)
-		self.parag_encoder = ParagEncoder()
-		self.pointer = InformedPointer(embedding_size=256)
+		self.embedding = nn.Embedding(config.n_tokens,config.word_embeddeding_size)
+		self.word_encoder = Elmo(config.options_file, config.weight_file, 1, dropout=self.dropout_value)
+
+		self.dense = nn.Linear(config.word_embeddeding_size+config.elmo_size,config.dim)
+		
+		# self.sentence_encoder = MultiHeadSentenceEncoder(config.sentence_encoder_conf)
+		self.sentence_encoder = RNNSentenceEncoder(config.dim,config.dim)
+		self.parag_encoder = TransformerParagEncoder(config.parag_encoder_conf)
+		self.pointer = InformedPointer(config.informed_pointer_conf)
 		
 		self.word_drop = nn.Dropout(self.dropout_value)
 		self.sent_drop = nn.Dropout(self.dropout_value)
+		if vectors is not None:
+			self.embedding.load_state_dict({'weight': torch.tensor(vectors)})
 	
-	def forward(self, x, s_lengths, p_lengths, labels=None):
-		batch_size, p_len, s_len,_ = x.size()
+	def forward(self, x_elmo, x_embedding , s_lengths, p_lengths, labels=None):
+		batch_size, p_len, s_len,_ = x_elmo.size()
 
 		#changing view
 		# x_ = x.view(p_len*batch_size, s_len)
-		# s_lengths_ = s_lengths.view(p_len*batch_size)
+		s_lengths_ = s_lengths.view(p_len*batch_size)
 		# sent_mask = getmask_hugging(s_lengths_, batch_size*p_len, s_len)
 		
-		elmo_out = self.word_encoder(x)
-		word_embedded = elmo_out['elmo_representations'][0].view(p_len*batch_size, s_len,-1)
-
+		elmo_out = self.word_encoder(x_elmo)
+		# print(elmo_out['elmo_representations'][0].shape)
+		word_embedded_elmo = elmo_out['elmo_representations'][0].view(p_len*batch_size, s_len,-1)
+		word_embedded_embedding = self.embedding(x_embedding).view(p_len*batch_size, s_len,-1)
+		word_embedded = torch.cat((word_embedded_elmo,word_embedded_embedding),-1)
 		sent_mask = elmo_out['mask'].bool()
+
 		word_embedded = self.word_drop(word_embedded)
 
+		
+		word_embedded = self.dense(word_embedded)
+		
+
+		# return None
 		# sent_embedded = sent_embedded.view(batch_size, p_len, -1)
-		sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask.view(p_len*batch_size, s_len))
+		sent_embedded = self.sentence_encoder(word_embedded, lengths=s_lengths_) # rnn
+		# sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask.view(p_len*batch_size, s_len))
 		sent_embedded = self.sent_drop(sent_embedded)
 
 
 		word_embedded = word_embedded.view(batch_size, p_len, s_len, -1)
 		sent_embedded = sent_embedded.view(batch_size, p_len, -1)
 		
-		parag_embedded = self.parag_encoder(sent_embedded)
+		parag_embedded, sent_embedded = self.parag_encoder(sent_embedded)
 
 
 		out = self.pointer(parag_embedded, sent_embedded, word_embedded, sent_mask, labels)
@@ -74,6 +89,8 @@ class FromBert(nn.Module):
 		self.dropout_value = config.dropout_value
 
 		self.word_encoder = WordEncoder(config.word_encoder_type)
+
+		self.dense = nn.Linear(768,config.dim)
 
 		# self.sentence_encoder = SentenceEncoder(768)
 		# self.sentence_encoder = RNNSentenceEncoder(768,768)
@@ -99,6 +116,7 @@ class FromBert(nn.Module):
 		# sent_embedded: (bs*p_len, 768)
 		
 		word_embedded, sent_mask = self.word_encoder(x_, s_lengths_)
+		word_embedded = self.dense(word_embedded)
 		word_embedded = self.word_drop(word_embedded)
 
 		# sent_embedded = sent_embedded.view(batch_size, p_len, -1)
@@ -110,14 +128,8 @@ class FromBert(nn.Module):
 
 		word_embedded = word_embedded.view(batch_size, p_len, s_len, -1)
 		sent_embedded = sent_embedded.view(batch_size, p_len, -1)
-		
-		
-		
 		#sent_embedded: (bs, p_len, em)
 
-		
-		
-		# parag_embedded = self.parag_encoder(sent_embedded)
 		parag_embedded, sent_embedded = self.parag_encoder(sent_embedded)
 		# parag_embedded: (bs, em)
 
@@ -125,7 +137,66 @@ class FromBert(nn.Module):
 
 		return out
 
+class FromGlove(nn.Module):
+	"""docstring for FromGlove"""
+	def __init__(self,config, vectors=None):
+		super(FromGlove, self).__init__()
+		self.dropout_value = config.dropout_value
 
+		# self.word_encoder = BertModel.from_pretrained('bert-base-uncased')
+		self.embedding = nn.Embedding(config.n_tokens,config.word_embeddeding_size)
+		self.word_encoder = RNNWordEncoder(config.word_embeddeding_size,int(config.dim/2),n_layers=1)
+
+		# self.dense = nn.Linear(config.word_embeddeding_size+config.elmo_size,config.dim)
+		
+		self.sentence_encoder = MultiHeadSentenceEncoder(config.sentence_encoder_conf)
+		# self.sentence_encoder = 
+		self.parag_encoder = TransformerParagEncoder(config.parag_encoder_conf)
+		self.pointer = InformedPointer(config.informed_pointer_conf)
+		
+		self.word_drop = nn.Dropout(self.dropout_value)
+		self.sent_drop = nn.Dropout(self.dropout_value)
+		if vectors is not None:
+			print('filling embedding')
+			self.embedding.load_state_dict({'weight': torch.tensor(vectors)})
+	
+	def forward(self, x_elmo, x_embedding , s_lengths, p_lengths, labels=None):
+		batch_size, p_len, s_len,_ = x_elmo.size()
+
+		#changing view
+		# x_ = x.view(p_len*batch_size, s_len)
+		s_lengths_ = s_lengths.view(p_len*batch_size)
+		sent_mask = getmask_hugging(s_lengths_, batch_size*p_len, s_len)
+		
+		# elmo_out = self.word_encoder(x_elmo)
+		# print(elmo_out['elmo_representations'][0].shape)
+		# word_embedded_elmo = elmo_out['elmo_representations'][0].view(p_len*batch_size, s_len,-1)
+		word_embedded = self.embedding(x_embedding).view(p_len*batch_size, s_len,-1)
+		word_embedded = self.word_encoder(word_embedded,lengths=s_lengths_)
+		# sent_mask = elmo_out['mask'].bool()
+
+		word_embedded = self.word_drop(word_embedded)
+
+		
+		# word_embedded = self.dense(word_embedded)
+		
+
+		# return None
+		# sent_embedded = sent_embedded.view(batch_size, p_len, -1)
+		# sent_embedded = self.sentence_encoder(word_embedded, lengths=s_lengths_) # rnn
+		sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask.view(p_len*batch_size, s_len))
+		sent_embedded = self.sent_drop(sent_embedded)
+
+
+		word_embedded = word_embedded.view(batch_size, p_len, s_len, -1)
+		sent_embedded = sent_embedded.view(batch_size, p_len, -1)
+		
+		parag_embedded, sent_embedded = self.parag_encoder(sent_embedded)
+
+
+		out = self.pointer(parag_embedded, sent_embedded, word_embedded, sent_mask, labels)
+
+		return out
 
 
 class WordEncoder(nn.Module):
@@ -135,15 +206,45 @@ class WordEncoder(nn.Module):
 		self.encoder_type=encoder_type
 		if self.encoder_type == 'bert':
 			self.encoder = BertModel.from_pretrained('bert-base-uncased')
+		elif self.encoder_type == 'distil':
+			self.encoder = DistilBertModel.from_pretrained('distilbert-base-cased')
 
 	def forward(self, x, s_lengths):
 		batch_size, s_len = x.shape
 		mask = getmask_hugging(s_lengths, batch_size, s_len)
-		word_embedded, _ = self.encoder(x, attention_mask = mask)
+		word_embedded = self.encoder(x, attention_mask = mask)
 
-		return word_embedded, mask
+		return word_embedded[0], mask
 
+class RNNWordEncoder(nn.Module):
+	"""docstring for RNNWordEncoder"""
+	def __init__(self, input_size, hidden_size, n_layers=1, rnn_type='LSTM', bidirectional=True, dropout=0.3):
+		super(RNNWordEncoder, self).__init__()
+		self.rnn_type = rnn_type
+		self.input_size = input_size
+		self.hidden_size = hidden_size
+		self.n_layers = n_layers
+		self.dropout = dropout
+		self.bidirectional = bidirectional
+		self.batch_first = True
+		
+		self.rnn = getattr(nn, self.rnn_type)(self.input_size, self.hidden_size, self.n_layers, 
+			dropout=self.dropout, bidirectional=self.bidirectional, batch_first=self.batch_first)
+		# self.rnn.apply(init_weights)
+		
 
+	def forward(self, inputs, hiddens=None, lengths=None):#, enforce_sorted=True):
+		# lengths = None
+		if lengths is not None:
+			inputs = torch.nn.utils.rnn.pack_padded_sequence(inputs, lengths, 
+						batch_first=self.batch_first, enforce_sorted=False)
+		
+		outputs, _ = self.rnn(inputs, hiddens)
+
+		if lengths is not None:
+			outputs, _ = torch.nn.utils.rnn.pad_packed_sequence(outputs, batch_first=self.batch_first)
+
+		return outputs
 
 		
 
@@ -287,16 +388,22 @@ class InformedPointer(nn.Module):
 		self.pointer = Attention(self.embedding_dim, self.embedding_dim,need_attn=False)
 
 		self.informed_layernorm = nn.LayerNorm(normalized_shape=self.embedding_dim, eps=1e-12)
+
+		self.sent_score = nn.Linear(self.embedding_dim,1)
+		self.info_score = nn.Linear(self.embedding_dim,1)
 		
 	def forward(self, parag_embedded, sent_embedded, word_embedded, sent_mask, labels=None):
 		batch_size, p_len, s_len, _ = word_embedded.shape
 		if self.training:
 			do_tf = True 
-			do_mask = False
+			# if torch.rand(1) < 0.3:
+			# 	do_mask = False
+			# else:
+			# 	do_mask = True
 		else:
 			do_tf = False
-			do_mask = True
-		
+		do_mask = True
+
 		res = []
 		hidden = self.init_hidden(batch_size,parag_embedded.device)
 		hidden[0][-1] = parag_embedded
@@ -313,9 +420,10 @@ class InformedPointer(nn.Module):
 			informred = self.informed_attn(q, s, sent_mask)[0] #hidden or selected?
 			informred = informred.view(batch_size,p_len,self.embedding_dim)
 			# informred = informred + sent_embedded
-			informred = self.informed_layernorm(informred+sent_embedded)
-
-			# informred = sent_embedded
+			# informred = self.informed_layernorm(informred+sent_embedded)
+			# g = torch.sigmoid(self.info_score(informred)+self.sent_score(sent_embedded))
+			# informred = self.informed_layernorm(g*informred+(1-g)*sent_embedded)
+			informred = sent_embedded
 		# 	# point to the next index
 			attn_weights = self.pointer(hidden[0][-1], informred, mask=par_mask)[0]
 			# attn_weights = self.pointer(hidden[0][-1], sent_embedded, mask=par_mask)[0]
@@ -334,8 +442,9 @@ class InformedPointer(nn.Module):
 			selected = sent_embedded[torch.arange(batch_size),index] #+ informed_query
 			selected = selected.unsqueeze(0)
 
+			par_mask = par_mask.clone().detach()
 			if do_mask:
-				par_mask = par_mask.clone().detach()
+				
 				par_mask[torch.arange(batch_size),index] = 1
 
 
