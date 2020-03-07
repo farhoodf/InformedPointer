@@ -1,3 +1,8 @@
+"""
+These codes mainly borrowed from distilbert implementation for transformer of huggingface:
+https://github.com/huggingface/transformers
+"""
+
 import math
 
 import torch
@@ -32,28 +37,7 @@ if torch.__version__ < "1.4.0":
 else:
     gelu = F.gelu
 
-class Config(object):
-	"""docstring for Config"""
-	def __init__(self, ):
-		super(Config, self).__init__()
-		self.n_layers = 2
-		self.n_heads = 4
-		self.dim = 768
-		self.hidden_dim = 1024
-
-		self.dropout = 0.3
-		self.attention_dropout = 0.3
-
-
-		self.activation = 'gelu'
-		self.output_attentions = False
-		self.output_hidden_states = False
-
-
-# config = Config()
-
-
-class MultiHeadSelfAttention(nn.Module):
+class MultiHeadAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
 
@@ -64,7 +48,7 @@ class MultiHeadSelfAttention(nn.Module):
 
         assert self.dim % self.n_heads == 0
 
-        self.q_lin = nn.Linear(in_features=config.dim, out_features=config.dim)
+        self.q_lin = nn.Linear(in_features=config.qdim, out_features=config.dim)
         self.k_lin = nn.Linear(in_features=config.dim, out_features=config.dim)
         self.v_lin = nn.Linear(in_features=config.dim, out_features=config.dim)
         self.out_lin = nn.Linear(in_features=config.dim, out_features=config.dim)
@@ -133,7 +117,7 @@ class MultiHeadSelfAttention(nn.Module):
 class FFN(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dropout = nn.Dropout(p=config.dropout)
+        self.dropout = nn.Dropout(p=config.ffn_dropout)
         self.lin1 = nn.Linear(in_features=config.dim, out_features=config.hidden_dim)
         self.lin2 = nn.Linear(in_features=config.hidden_dim, out_features=config.dim)
         assert config.activation in ["relu", "gelu"], "activation ({}) must be in ['relu', 'gelu']".format(
@@ -148,7 +132,7 @@ class FFN(nn.Module):
         x = self.dropout(x)
         return x
 
-class TransformerEncoderLayer(nn.Module):
+class TransformerEncoderBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
 
@@ -156,7 +140,7 @@ class TransformerEncoderLayer(nn.Module):
 
         assert config.dim % config.n_heads == 0
 
-        self.attention = MultiHeadSelfAttention(config)
+        self.attention = MultiHeadAttention(config)
         self.sa_layer_norm = nn.LayerNorm(normalized_shape=config.dim, eps=1e-12)
 
         self.ffn = FFN(config)
@@ -194,6 +178,55 @@ class TransformerEncoderLayer(nn.Module):
             output = (sa_weights,) + output
         return output
 
+class TransformerDecoderBlock(nn.Module):
+	"""docstring for TransformerDecoderBlock"""
+	def __init__(self, config):
+		super(TransformerDecoderBlock, self).__init__()
+		self.output_attentions = config.output_attentions
+
+		assert config.dim % config.n_heads == 0
+
+		self.attention = MultiHeadAttention(config)
+		self.sa_layer_norm = nn.LayerNorm(normalized_shape=config.dim, eps=1e-12)
+
+		self.ffn = FFN(config)
+		self.output_layer_norm = nn.LayerNorm(normalized_shape=config.dim, eps=1e-12)
+
+
+	def forward(self, query, states, attn_mask=None, head_mask=None):
+		"""
+		Parameters
+		----------
+		query: torch.tensor(bs, seq_length, dim)
+		states: torch.tensor(bs, seq_length, dim)
+		attn_mask: torch.tensor(bs, seq_length)
+
+		Outputs
+		-------
+		sa_weights: torch.tensor(bs, n_heads, seq_length, seq_length)
+			The attention weights
+		ffn_output: torch.tensor(bs, seq_length, dim)
+			The output of the transformer block contextualization.
+		"""
+
+		sa_output = self.attention(query=query, key=states, value=states, mask=attn_mask, head_mask=head_mask)
+		if self.output_attentions:
+			sa_output, sa_weights = sa_output  # (bs, seq_length, dim), (bs, n_heads, seq_length, seq_length)
+		else:  # To handle these `output_attention` or `output_hidden_states` cases returning tuples
+			assert type(sa_output) == tuple
+			sa_output = sa_output[0]
+
+		# sa_output = self.sa_layer_norm(sa_output + x)  # (bs, seq_length, dim)
+
+		# Feed Forward Network
+		ffn_output = self.ffn(sa_output)  # (bs, seq_length, dim)
+		ffn_output = self.output_layer_norm(ffn_output + sa_output)  # (bs, seq_length, dim)
+
+		output = (ffn_output,)
+		if self.output_attentions:
+			output = (sa_weights,) + output
+		return output
+
 class TransformerEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -202,7 +235,7 @@ class TransformerEncoder(nn.Module):
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
 
-        layer = TransformerEncoderLayer(config)
+        layer = TransformerEncoderBlock(config)
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.n_layers)])
 
     def forward(self, x, attn_mask=None, head_mask=None):
@@ -277,3 +310,55 @@ class TransformerEncoder(nn.Module):
         if self.output_attentions:
             outputs = outputs + (all_attentions,)
         return outputs  # last-layer hidden state, (all hidden states), (all attentions)
+
+class Attention(nn.Module):
+	"""docstring for Attention
+	Inputs:
+	query:		(bs,emb)
+	states:		(bs, slen, dim)
+	Output:
+	weights:	(bs, slen)
+	attn:		(bs, slen)
+	"""
+	def __init__(self, q_dim, v_dim, internal_dim=None, dropout_value = 0.2,need_attn=True):
+		super(Attention, self).__init__()
+		
+		if internal_dim == None:
+			internal_dim = v_dim
+		self.dropout_value = dropout_value
+
+		self.need_attn = need_attn
+
+		self.proj_q = nn.Linear(q_dim, internal_dim)
+		self.proj_k = nn.Linear(v_dim, internal_dim)
+		self.proj_e = nn.Linear(2*internal_dim,1)
+
+		self.drop_q = nn.Dropout(self.dropout_value)
+		self.drop_k = nn.Dropout(self.dropout_value)
+
+	def forward(self, query, states, mask=None):
+		bs,slen,em = states.shape
+		q = F.relu(self.proj_q(query)).unsqueeze(1).repeat(1,slen,1)
+		q = self.drop_q(q)
+		k = F.relu(self.proj_k(states))
+		k = self.drop_k(k)
+
+		energy = self.proj_e(torch.tanh(torch.cat((q,k),-1))).squeeze(2)
+		# if not self.need_attn:
+		if mask is not None:
+			energy.masked_fill_(mask,1e-45)
+		# mask can be applied here to put very low value for energy
+
+		attn_weights = F.softmax(energy,dim=1)
+		# if mask is not None:
+		# 	attn_weights.masked_fill_(mask, 0)
+		out = (attn_weights,)
+
+		if self.need_attn:
+			# v = F.relu(self.proj_v(states))
+			v = states
+			attn = torch.mul(attn_weights.unsqueeze(2).repeat(1,1,em),v).sum(1)
+			out += (attn,)
+
+		return out
+

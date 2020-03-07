@@ -86,7 +86,7 @@ class ROC(AbstractData):
 			# labels = list(range(len(sample)-1,-1,-1))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
 
-			# self.data = self.data[:1000]
+			# self.data = self.data[:2000]
 
 
 class Synthetic(AbstractData):
