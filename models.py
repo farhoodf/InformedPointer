@@ -1,27 +1,34 @@
 import torch
 import torch.nn as nn
 
-from modules import WordEncoder, SentenceEncoder, ParagEncoder, InformedPointer
+from modules import WordEncoder, SentenceEncoder, ParagEncoder, InformedPointer, BidirectionalPointer
 
-
-
+def xavier_init_weights(m):
+	if type(m) == nn.Linear:
+		nn.init.xavier_uniform_(m.weight)
+		if m.bias is not None:
+			m.bias.data.fill_(0.01)
 class FromBert(nn.Module):
 	"""docstring for FromBert"""
-	def __init__(self, config):
+	def __init__(self, config, bidirectional=False):
 		super(FromBert, self).__init__()
 		self.dropout_value = config.dropout_value
 
 		self.word_encoder = WordEncoder(config.word_encoder_config)
 
-		self.dense = nn.Linear(768,config.dim)
+		self.dense = nn.Linear(config.bert_dim,config.dim)
 
 		self.sentence_encoder = SentenceEncoder(config.sentence_encoder_conf)
 
 		self.parag_encoder = ParagEncoder(config.parag_encoder_conf)
-		self.pointer = InformedPointer(config.pointer_conf)
+		if not bidirectional:
+			self.pointer = InformedPointer(config.pointer_conf)
+		else:
+			self.pointer = BidirectionalPointer(config.pointer_conf)
 		
 		self.word_drop = nn.Dropout(self.dropout_value)
 		self.sent_drop = nn.Dropout(self.dropout_value)
+		# self._init_weights()
 	
 	def forward(self, x, s_lengths, p_lengths, labels=None):
 		batch_size, p_len, s_len = x.size()
@@ -51,3 +58,9 @@ class FromBert(nn.Module):
 		out = self.pointer(parag_embedded, sent_embedded, word_embedded, sent_mask, labels)
 
 		return out
+
+	def _init_weights(self,):
+		self.dense.apply(xavier_init_weights)
+		self.sentence_encoder.apply(xavier_init_weights)
+		self.parag_encoder.apply(xavier_init_weights)
+		self.pointer.apply(xavier_init_weights)

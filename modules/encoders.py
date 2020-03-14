@@ -22,8 +22,11 @@ class WordEncoder(nn.Module):
 	def __init__(self, config):
 		super(WordEncoder, self).__init__()
 		self.encoder_type = config.encoder_type
-		if self.encoder_type == 'bert':
+		if self.encoder_type == 'bert-base':
 			self.encoder = BertModel.from_pretrained('bert-base-uncased')
+			self.forward = self.forward_berties
+		if self.encoder_type == 'bert-large':
+			self.encoder = BertModel.from_pretrained('bert-large-uncased')
 			self.forward = self.forward_berties
 		elif self.encoder_type == 'distil':
 			self.encoder = DistilBertModel.from_pretrained('distilbert-base-cased')
@@ -58,7 +61,7 @@ class SentenceEncoder(nn.Module):
 			self.encoder = RNNEncoder(config.rnn_config)
 			self.forward = self.forward_birnn
 		elif self.encoder_type == 'attention':
-			self.encoder = MultiHeadAttention(config.multihead_conf)
+			self.encoder = TransformerDecoderBlock(config.multihead_conf)
 			self.query = nn.Linear(1, config.multihead_conf.dim, bias=False)
 			self.forward = self.forward_attention
 
@@ -73,7 +76,7 @@ class SentenceEncoder(nn.Module):
 	def forward_attention(self, word_embedded, mask):
 		ones = torch.ones((word_embedded.shape[0],1,1),device=word_embedded.device)
 		q = self.query(ones)
-		sent_embedded = self.encoder(q, word_embedded, word_embedded, mask)[0]
+		sent_embedded = self.encoder(q, word_embedded, mask)[0]
 		sent_embedded = sent_embedded.squeeze(1)
 		return sent_embedded
 
@@ -84,7 +87,7 @@ class ParagEncoder(nn.Module):
 		super(ParagEncoder, self).__init__()
 		self.encoder_type = config.encoder_type
 		self.query = nn.Linear(1, config.multihead_conf.dim, bias=False)
-		self.encoder = MultiHeadAttention(config.multihead_conf)
+		self.encoder = TransformerDecoderBlock(config.multihead_conf)
 		# if self.encoder_type == 'transformer':
 		self.transformer = TransformerEncoder(config.transformer_conf)
 
@@ -98,7 +101,7 @@ class ParagEncoder(nn.Module):
 
 		ones = torch.ones((sent_embedded.shape[0],1,1),device=sent_embedded.device)
 		q = self.query(ones)
-		parag_embedded = self.encoder(q, sent_embedded, sent_embedded, mask)[0]
+		parag_embedded = self.encoder(q, sent_embedded, mask)[0]
 		parag_embedded = parag_embedded.squeeze(1)
 		return parag_embedded, sent_embedded
 

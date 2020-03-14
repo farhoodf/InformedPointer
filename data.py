@@ -52,7 +52,8 @@ class AbstractData(Dataset):
 				self.data[i]['vectorized'][j] = torch.tensor(self.data[i]['vectorized'][j])
 class SIND(AbstractData):
 	"""docstring for SIND"""
-	def __init__(self, path, tokenizer=None, w_to_id=None):
+	def __init__(self, path, tokenizer=None, w_to_id=None,extra=False):
+		self.extra = extra
 		super(SIND, self).__init__(path, tokenizer, w_to_id)
 
 	
@@ -63,7 +64,8 @@ class SIND(AbstractData):
 			raw_sample = raw[key]
 			# sample = [token_config['first_sent']]+[raw[key][str(i)]['original_text'] for i in range(len(raw_sample))]#+[[token_config['last_sent']]]
 			sample = [raw[key][str(i)]['original_text'] for i in range(len(raw_sample))]#+[[token_config['last_sent']]]
-
+			if self.extra:
+				sample = [[token_config['first_sent']]] + sample + [[token_config['last_sent']]]
 			labels = list(range(len(sample)))
 			# labels = list(range(len(sample)-1,-1,-1))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
@@ -72,7 +74,8 @@ class SIND(AbstractData):
 
 class ROC(AbstractData):
 	"""docstring for ROC"""
-	def __init__(self, path, tokenizer=None, w_to_id=None):
+	def __init__(self, path, tokenizer=None, w_to_id=None, extra=False):
+		self.extra = extra
 		super(ROC, self).__init__(path, tokenizer, w_to_id)
 	
 	def __load_data__(self):
@@ -80,14 +83,31 @@ class ROC(AbstractData):
 		dataFrame = pd.read_csv(self.path,error_bad_lines=False)
 		raw = dataFrame.values
 		for i in range(raw.shape[0]):
-			sample = raw[i,2:]
-			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
+			sample = list(raw[i,2:])
+			if self.extra:
+				sample = [[token_config['first_sent']]] + sample + [[token_config['last_sent']]]
 			labels = list(range(len(sample)))
 			# labels = list(range(len(sample)-1,-1,-1))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
 
-			# self.data = self.data[:2000]
+			# self.data = self.data[:5000]
 
+class NIPS(AbstractData):
+	"""docstring for NIPS"""
+	def __init__(self, path, tokenizer=None, w_to_id=None):
+		super(NIPS, self).__init__(path, tokenizer, w_to_id)
+	
+	def __load_data__(self):
+		with open(self.path,'r') as f:
+			raw = f.readlines()
+		for i in range(len(raw)):
+			sample = raw[i].strip().split('<eos>')
+			sample = [sent.strip() for sent in sample]
+			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
+			labels = list(range(len(sample)))
+			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
+
+			# self.data = self.data[:5000]
 
 class Synthetic(AbstractData):
 	"""docstring for Synthetic"""
@@ -166,7 +186,49 @@ def bert_batchify(batch):
 
 	return {'data':padded_data,'s_lengths':padded_lengths, 'labels': padded_labels,
 			'p_lengths':torch.tensor(p_lens), 'text':text}
+def bert_batchify_notshuffle(batch):
 
+	batch_size = len(batch)
+	data = []
+	labels = []
+	s_lengths = []
+	p_lens = []
+	max_sent_len = []
+	text = []
+
+	for sample in batch:
+		sent_ids = []
+		bert_lens = []
+		for sent in sample['text']:
+			sent_ids.append(tokenizer.encode(sent))
+			bert_lens.append(len(sent_ids[-1]))
+		text.append(sample['text'])
+		s_lengths.append(bert_lens)
+		data.append(sent_ids)
+		labels.append(sample['labels'])
+		
+		p_lens.append(sample['p_len'])
+		max_sent_len.append(max(bert_lens))
+	p_len = max(p_lens)
+	s_len = max(max_sent_len)
+
+	padded_data = torch.zeros((batch_size,p_len,s_len),dtype=torch.long)
+	padded_lengths = torch.ones((batch_size,p_len),dtype=torch.long)
+	padded_labels = torch.zeros((batch_size,p_len),dtype=torch.long)
+	for i in range(batch_size):
+		shuffled_indices = torch.arange(p_lens[i])
+		data[i] = [data[i][k] for k in shuffled_indices]
+		s_lengths[i] = [s_lengths[i][k] for k in shuffled_indices]
+		padded_labels[i,:p_lens[i]] = torch.argsort(shuffled_indices)#,descending=True)
+		text[i] = [text[i][k] for k in shuffled_indices]
+
+		for j in range(p_lens[i]):
+			padded_data[i,j,:s_lengths[i][j]] = torch.tensor(data[i][j])
+			padded_lengths[i,j] = s_lengths[i][j]
+
+
+	return {'data':padded_data,'s_lengths':padded_lengths, 'labels': padded_labels,
+			'p_lengths':torch.tensor(p_lens), 'text':text}
 def elmo_batchify(batch):
 
 	batch_size = len(batch)

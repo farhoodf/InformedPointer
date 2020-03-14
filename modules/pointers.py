@@ -41,8 +41,8 @@ class InformedPointer(nn.Module):
 			self.informed_attn = TransformerDecoderBlock(config.informed_attention_config)
 			self.informed_layernorm = nn.LayerNorm(normalized_shape=self.embedding_dim, eps=1e-12)
 			self.get_informed = self.add_informed
-			self.sent_score = nn.Linear(self.embedding_dim,1)
-			self.info_score = nn.Linear(self.embedding_dim,1)
+			# self.sent_score = nn.Linear(self.embedding_dim,1)
+			self.info_score = nn.Linear(2*self.embedding_dim,1)
 		elif self.informed_attention_type == 'notinformed':
 			self.get_informed = self.pass_informed
 
@@ -101,8 +101,9 @@ class InformedPointer(nn.Module):
 		return informed
 
 	def add_informed(self, query, word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len):
-		informed = self.just_informed(query, word_embedded, sent_embedded ,sent_mask, batch_size, p_len)
-		g = torch.sigmoid(self.info_score(informed)+self.sent_score(sent_embedded))
+		informed = self.just_informed(query, word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len)
+		# g = torch.sigmoid(self.info_score(informed)+self.sent_score(sent_embedded))
+		g = torch.sigmoid(self.info_score(torch.cat((informed,sent_embedded),-1)))
 		informed = self.informed_layernorm(g*informed+(1-g)*sent_embedded)
 		return informed
 	
@@ -115,3 +116,46 @@ class InformedPointer(nn.Module):
 			h_n = torch.zeros(self.rnn_n_layers, batch_size, self.rnn_hidden_size,device=device)
 			c_n = torch.zeros(self.rnn_n_layers, batch_size, self.rnn_hidden_size,device=device)
 			return (h_n, c_n)
+
+class BidirectionalPointer(nn.Module):
+	"""docstring for BidirectionalPointer"""
+	def __init__(self, config):
+		super(BidirectionalPointer, self).__init__()
+
+		self.embedding_dim = config.embedding_dim
+		# self.dropout_value = config.rnn_dropout_value
+		self.dropout_value = config.rnnout_dropout_value
+		# self.informed_attention_type = config.informed_attention_type
+		self.pointer_drop = config.pointer_drop
+		self.informed_attn = TransformerDecoderBlock(config.informed_attention_config)
+		self.forward_pointer = Attention(self.embedding_dim, self.embedding_dim, dropout_value=self.pointer_drop, need_attn=False)
+		self.backward_pointer = Attention(self.embedding_dim, self.embedding_dim, dropout_value=self.pointer_drop, need_attn=False)
+		
+	def forward(self, parag_embedded, sent_embedded, word_embedded, sent_mask, labels=None):
+		# parag_embedded 	: (bs,emsize)
+		# sent_embedded 	: (bs,p_len,emsize)
+		# word_embedded 	: (bs,p_len,s_len,emsize)
+		bs, p_len,s_len,emsize = word_embedded.shape
+		q = sent_embedded.view(bs*p_len,emsize)
+		q = q.unsqueeze(1).repeat(1,p_len,1)
+		s = word_embedded.view(bs*p_len,s_len,self.embedding_dim)
+		# q 	: (bs*p_len, p_len, emsize)
+		# s 	: (bs*p_len, s_len, emsize)
+
+		
+		informed = self.informed_attn(q,s,sent_mask)[0]
+		# informed: 	(bs*p_len, p_len, emsize)
+		# informed = informed.view(bs,p_len,p_len,emsize)
+
+		#forward
+
+		qsent = sent_embedded.view(bs*p_len,emsize)
+		qparag = parag_embedded.unsqueeze(1).repeat(1,p_len,1).view(bs*p_len,emsize)
+		# qsent & qparag -> q
+		q = qsent
+		par_mask = None
+		attn_weights_forward = self.forward_pointer(q, informed, mask=par_mask)[0]
+		attn_weights_backward = self.backward_pointer(q, informed, mask=par_mask)[0]
+
+
+		return attn_weights_forward.view(bs,p_len,p_len), attn_weights_backward.view(bs,p_len,p_len)

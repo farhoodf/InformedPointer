@@ -37,6 +37,8 @@ if torch.__version__ < "1.4.0":
 else:
     gelu = F.gelu
 
+gelu = gelu_new
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -89,6 +91,9 @@ class MultiHeadAttention(nn.Module):
             """ group heads """
             return x.transpose(1, 2).contiguous().view(bs, -1, self.n_heads * dim_per_head)
 
+        # q = shape(gelu(self.q_lin(query)))  # (bs, n_heads, q_length, dim_per_head)
+        # k = shape(gelu(self.k_lin(key)))  # (bs, n_heads, k_length, dim_per_head)
+        # v = shape(gelu(self.v_lin(value)))  # (bs, n_heads, k_length, dim_per_head)
         q = shape(self.q_lin(query))  # (bs, n_heads, q_length, dim_per_head)
         k = shape(self.k_lin(key))  # (bs, n_heads, k_length, dim_per_head)
         v = shape(self.v_lin(value))  # (bs, n_heads, k_length, dim_per_head)

@@ -5,12 +5,12 @@ import itertools
 
 
 def new_tau(t,p):
-    s_t = set([i for i in itertools.combinations(t, 2)])
-    s_p = set([i for i in itertools.combinations(p, 2)])
-    cn_2 = len(p) * (len(p) - 1) / 2
-    pairs = len(s_p) - len(s_p.intersection(s_t))
-    tau = 1 - 2 * pairs / cn_2
-    return tau
+	s_t = set([i for i in itertools.combinations(t, 2)])
+	s_p = set([i for i in itertools.combinations(p, 2)])
+	cn_2 = len(p) * (len(p) - 1) / 2
+	pairs = len(s_p) - len(s_p.intersection(s_t))
+	tau = 1 - 2 * pairs / cn_2
+	return tau
 
 def pmr(y, y_hat, lengths):
 	batch_size = y.size()[0]
@@ -80,7 +80,7 @@ def train(model, trainloader, optim, criterion, clip=None):
 		l = batch['s_lengths'].shape[1]
 		optim.zero_grad()
 		out = model(batch['data'],batch['s_lengths'],batch['p_lengths'],batch['labels'])
-#         reshaped_y,reshaped_y_hat = reshape_labels(batch['labels'],out,batch['p_lengths'])
+		# reshaped_y,reshaped_y_hat = reshape_labels(batch['labels'],out,batch['p_lengths'])
 		reshaped_y = batch['labels'].view(-1)
 		reshaped_y_hat = out.reshape(-1,l)
 		loss = criterion(reshaped_y_hat,reshaped_y)
@@ -101,6 +101,7 @@ def eval(model, valloader, criterion):
 			batch = batch_generator(batch)
 			l = batch['s_lengths'].shape[1]
 			out = model(batch['data'],batch['s_lengths'],batch['p_lengths'])#,batch['labels'])
+			# reshaped_y,reshaped_y_hat = reshape_labels(batch['labels'],out,batch['p_lengths'])
 			reshaped_y = batch['labels'].view(-1)
 			reshaped_y_hat = out.reshape(-1,l)
 			loss = criterion(reshaped_y_hat,reshaped_y)
