@@ -2,8 +2,8 @@
 token_config={
 	'unknown' : '__unk__',
 	'pad_token': '__pad__',
-	'first_sent':'__start__',
-	'last_sent':'__end__'
+	'first_sent':'begin',
+	'last_sent':'end'
 }
 
 
@@ -118,18 +118,30 @@ class PointerConfig(object):
 		self.rnnout_dropout_value = rnnout_dropout_value
 		self.pointer_drop = pointer_drop
 
-		if informed_attention_type in {'informed','addinformed'}:
+		if informed_attention_type in {'informed','addinformed','catinformed'}:
 			assert informed_attention_config != None
-		else:
-			assert informed_attention_config == None
 
 		self.informed_attention_config = informed_attention_config
 		self.informed_attention_type = informed_attention_type
 
 class FromBertConfig(object):
 	"""docstring for FromBertConfig"""
-	def __init__(self, gen_dim = 256, rnn_dim = 64):
+	def __init__(self,
+				gen_dim = 64,
+				rnn_dim = 64,
+				multi_drop=0.2,
+				pointer_drop = 0.3,
+				rnn_dropout = 0.2,
+				word_encoder_drop = 0.3,
+				n_layer_sent=2,
+				n_heads = 4,
+				informed_type='informed'
+				):
 		super(FromBertConfig, self).__init__()
+		
+		
+		
+		
 		
 		self.bert_dim = 768
 		# self.bert_dim = 1024
@@ -141,10 +153,10 @@ class FromBertConfig(object):
 													word_embedding_size=100)
 		sent_multihead_conf = TransformerConfig(
 				dim = gen_dim,
-				n_heads = 4,
+				n_heads = n_heads,
 				hidden_dim = gen_dim*2,
-				ffn_dropout = 0.2,
-				attention_dropout = 0.2,
+				ffn_dropout = multi_drop,
+				attention_dropout = multi_drop,
 				)
 		self.sentence_encoder_conf = SentenceEncoderConfig(
 										encoder_type='attention', #{attention, rnn}
@@ -155,20 +167,20 @@ class FromBertConfig(object):
 
 		parag_multihead_conf = TransformerConfig(
 				dim = gen_dim,
-				n_heads = 4,
+				n_heads = n_heads,
 				hidden_dim = gen_dim*2,
 				qdim = None,
-				ffn_dropout = 0.2,
-				attention_dropout = 0.2,
+				ffn_dropout = multi_drop,
+				attention_dropout = multi_drop,
 				)
 		parag_trans_conf = TransformerConfig(
 				dim = gen_dim,
-				n_heads = 4,
+				n_heads = n_heads,
 				hidden_dim = gen_dim*2,
 				qdim = None,
-				ffn_dropout = 0.2,
-				attention_dropout = 0.2,
-				n_layers = 2
+				ffn_dropout = multi_drop,
+				attention_dropout = multi_drop,
+				n_layers = n_layer_sent
 				)
 		self.parag_encoder_conf = ParagEncoderConfig(
 										encoder_type='transformer', #{transformer}
@@ -178,21 +190,21 @@ class FromBertConfig(object):
 
 		informed_attn = TransformerConfig(
 				dim = gen_dim,
-				n_heads = 4,
+				n_heads = n_heads,
 				hidden_dim = gen_dim*2,
 				qdim = rnn_dim,
-				ffn_dropout = 0.2,
-				attention_dropout = 0.2,
+				ffn_dropout = multi_drop,
+				attention_dropout = multi_drop,
 				)
 		self.pointer_conf = PointerConfig(
 										rnn_hidden_size = rnn_dim,
 										rnn_n_layers = 1,
 										rnn_dropout_value = 0,
-										rnnout_dropout_value = 0.2,
-										pointer_drop = 0.2,
+										rnnout_dropout_value = rnn_dropout,
+										pointer_drop = pointer_drop,
 										embedding_dim = gen_dim,
-										informed_attention_config = informed_attn,
-										informed_attention_type = 'informed'
+										informed_attention_config = informed_attn, #informed_attn,
+										informed_attention_type = informed_type #{'informed','notinformed'}
 										)
 		self.dropout_value = 0.3
 

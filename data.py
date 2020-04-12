@@ -4,16 +4,19 @@ import numpy as np
 from torch.utils.data import Dataset
 import json
 from config import token_config
-import nltk
+# import nltk
 import pandas as pd
-from multiprocessing import Pool
+# from multiprocessing import Pool
 import re
+alphaRegex = re.compile('[^a-zA-Z,.]')
+regex_formula = re.compile("\$(.*?)\$")
 
 from transformers import BertTokenizer, DistilBertTokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 # tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-cased')
-from allennlp.modules.elmo import batch_to_ids
+# from allennlp.modules.elmo import batch_to_ids
 
+from multiprocessing import Pool
 
 class AbstractData(Dataset):
 	"""docstring for AbstractData"""
@@ -32,8 +35,20 @@ class AbstractData(Dataset):
 		return len(self.data)
 	
 	def __getitem__(self, idx):
-		return self.data[idx]
+		# return self.data[idx]
+		if 'vectors' in self.data[idx]:
+			return self.data[idx]
+		else:
 
+			sent_ids = []
+			slens = []
+			for i in range(len(self.data[idx]['text'])):
+				sent_ids.append(tokenizer.encode(self.data[idx]['text'][i]))
+				slens.append(len(sent_ids[-1]))
+			self.data[idx]['s_len'] = slens
+			self.data[idx]['vectors'] = sent_ids
+			return self.data[idx]
+	
 	def tokenize(self, tokenizer):
 		for i in range(len(self.data)):
 			self.data[i]['s_len'] = []
@@ -107,7 +122,118 @@ class NIPS(AbstractData):
 			labels = list(range(len(sample)))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
 
-			# self.data = self.data[:5000]
+		# self.data = self.data[:1000]
+
+class NFS(AbstractData):
+	"""docstring for NFS"""
+	def __init__(self, path, tokenizer=None, w_to_id=None, maxp=100):
+		self.maxp = maxp
+		super(NFS, self).__init__(path, tokenizer, w_to_id)
+	
+	def __load_data__(self):
+		fnames = os.listdir(self.path)
+		for fname in fnames:
+			with open(os.path.join(self.path,fname),'r') as f:
+				sample = f.readlines()
+			if len(sample) > self.maxp:
+				continue
+			check = False
+			sample = [sent.strip() for sent in sample]
+			for sent in sample:
+				if len(sent.split()) > 100:
+					check = True
+			if check:
+				continue
+			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
+			labels = list(range(len(sample)))
+			self.data.append({'text':sample,'labels':labels,'p_len':len(labels),'fname':fname})
+
+		self.data = self.data[:1000]
+
+# def read_pool(doc):
+# 	sentences = doc.split('\n')[2:]
+# 	l = len(sentences)
+# 	if l > 1:
+# 		# sample = [nltk.word_tokenize(sent) for sent in sentences]
+# 		# sample = [tokenizer.encode(regex_formula.sub(' ',sent)) for sent in sentences]
+# 		sentences = [regex_formula.sub('frm',sent) for sent in sentences]
+# 		sentences = [alphaRegex.sub(' ',sent) for sent in sentences]
+
+# 		sample = [tokenizer.encode(sent) for sent in sentences]
+# 		# sample = [sent.split() for sent in sentences]
+# 		# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
+		
+# 		sent_len = []
+# 		for i in range(len(sample)):
+# 			# sentences[i] = prep(sentences[i].strip().lower()).split()
+# 			# if len(sample[i]) < 1:
+# 			# 	sample[i] = ['__unk__']
+# 			# 	print(sample)
+# 			sent_len.append(len(sample[i]))
+# 		labels = list(range(len(sample)))		
+
+# 		return {'text':sample,'labels':labels,'s_lengths':sent_len,'p_len':len(labels),'max_sent_len':max(sent_len)}
+
+# class ArXiv(AbstractData):
+# 	"""docstring for ArXiv"""
+# 	def __init__(self, path, tokenizer=None, w_to_id=None, maxp=None):
+# 		self.maxp = maxp
+# 		super(ArXiv, self).__init__(path, tokenizer, w_to_id)
+	
+# 	def __load_data__(self):
+
+# 		with open(self.path,'r') as f:
+# 			raw = f.read()
+# 		docs = raw.split('\n\n')
+
+# 		with Pool(4) as p:
+# 			self.data = [x for x in p.imap(read_pool, docs) if x is not None]
+		# for i in range(len(docs)):
+		# 	sentences = docs[i].split('\n')[2:]
+		# 	# if len(sentences) < 2:
+		# 	# 	continue
+		# 	if self.maxp is not None:
+		# 		if len(sentences) > self.maxp:
+		# 			continue
+		# 	sample = [sent.strip() for sent in sentences]
+
+		# 	# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
+		# 	labels = list(range(len(sample)))
+		# 	self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
+
+		# self.data = self.data[:1500]
+
+class ArXiv(AbstractData):
+	"""docstring for ArXiv"""
+	def __init__(self, path, tokenizer=None, w_to_id=None, maxp=100):
+		self.maxp = maxp
+		super(ArXiv, self).__init__(path, tokenizer, w_to_id)
+	
+	def __load_data__(self):
+
+		with open(self.path,'r') as f:
+			raw = f.read()
+		docs = raw.split('\n\n')
+
+		for i in range(len(docs)):
+			sentences = docs[i].split('\n')[2:]
+			if len(sentences) < 2:
+				continue
+			# if self.maxp is not None:
+			if len(sentences) > self.maxp:
+				continue
+			sample = [re.sub(' +', ' ',alphaRegex.sub(' ',sent.strip())) for sent in sentences]
+			# too_long = False
+			# for j in range(len(sample)):
+			# 	l = len(sample[j].split())
+			# 	if (l > 150) or (l < 2):
+			# 		too_long = True
+			# if too_long:
+			# 	continue
+
+			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
+			labels = list(range(len(sample)))
+			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
 
 class Synthetic(AbstractData):
 	"""docstring for Synthetic"""
@@ -142,6 +268,43 @@ class Synthetic(AbstractData):
 		# 	self.data = self.data[:500]
 
 
+def batchify(batch):
+
+	batch_size = len(batch)
+	data = []
+	labels = []
+	s_lengths = []
+	p_lens = []
+	max_sent_len = []
+	text = []
+
+	for sample in batch:
+		text.append(sample['text'])
+		s_lengths.append(sample['s_len'])
+		data.append(sample['vectors'])
+		labels.append(sample['labels'])
+		p_lens.append(sample['p_len'])
+		max_sent_len.append(max(sample['s_len']))
+	p_len = max(p_lens)
+	s_len = max(max_sent_len)
+
+	padded_data = torch.zeros((batch_size,p_len,s_len),dtype=torch.long)
+	padded_lengths = torch.ones((batch_size,p_len),dtype=torch.long)
+	padded_labels = torch.zeros((batch_size,p_len),dtype=torch.long)
+	for i in range(batch_size):
+		shuffled_indices = torch.randperm(p_lens[i])
+		data[i] = [data[i][k] for k in shuffled_indices]
+		s_lengths[i] = [s_lengths[i][k] for k in shuffled_indices]
+		padded_labels[i,:p_lens[i]] = torch.argsort(shuffled_indices)#,descending=True)
+		text[i] = [text[i][k] for k in shuffled_indices]
+
+		for j in range(p_lens[i]):
+			padded_data[i,j,:s_lengths[i][j]] = torch.tensor(data[i][j])
+			padded_lengths[i,j] = s_lengths[i][j]
+
+
+	return {'data':padded_data,'s_lengths':padded_lengths, 'labels': padded_labels,
+			'p_lengths':torch.tensor(p_lens), 'text':text}
 
 def bert_batchify(batch):
 

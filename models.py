@@ -55,7 +55,7 @@ class FromBert(nn.Module):
 		parag_embedded, sent_embedded = self.parag_encoder(sent_embedded)
 		# parag_embedded: (bs, em)
 
-		out = self.pointer(parag_embedded, sent_embedded, word_embedded, sent_mask, labels)
+		out = self.pointer(parag_embedded, sent_embedded, word_embedded, sent_mask, p_lengths, labels)
 
 		return out
 
