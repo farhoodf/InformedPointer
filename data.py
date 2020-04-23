@@ -148,7 +148,7 @@ class NFS(AbstractData):
 			labels = list(range(len(sample)))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels),'fname':fname})
 
-		self.data = self.data[:1000]
+		# self.data = self.data[:1000]
 
 # def read_pool(doc):
 # 	sentences = doc.split('\n')[2:]

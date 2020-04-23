@@ -76,9 +76,14 @@ class SentenceEncoder(nn.Module):
 	def forward_attention(self, word_embedded, mask):
 		ones = torch.ones((word_embedded.shape[0],1,1),device=word_embedded.device)
 		q = self.query(ones)
+		# sent_embedded = self.encoder(q, word_embedded, mask)[0]
+		# sent_embedded = sent_embedded.squeeze(1)
+		# return sent_embedded
 		sent_embedded = self.encoder(q, word_embedded, mask)[0]
+		# sent_embedded, weights = self.encoder(q, word_embedded, mask)
 		sent_embedded = sent_embedded.squeeze(1)
 		return sent_embedded
+		# return sent_embedded, weights
 
 
 class ParagEncoder(nn.Module):

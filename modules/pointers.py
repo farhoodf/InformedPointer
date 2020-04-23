@@ -76,6 +76,7 @@ class InformedPointer(nn.Module):
 		do_mask = True
 
 		res = []
+		attns = []
 		hidden = self.init_hidden(batch_size,parag_embedded.device)
 		hidden[0][-1] = self.parag_to_hidden(parag_embedded)
 		selected = torch.zeros_like(parag_embedded).unsqueeze(0)
@@ -86,6 +87,7 @@ class InformedPointer(nn.Module):
 			hidden = (self.after_rnn_drop(hidden[0]), self.after_rnn_drop(hidden[1]))
 			
 			informed = self.get_informed(hidden[0][-1], word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len)
+			# informed, attn = self.get_informed(hidden[0][-1], word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len)
 			attn_weights = self.pointer(hidden[0][-1], informed, mask=par_mask)[0]
 
 			if do_tf:
@@ -102,8 +104,10 @@ class InformedPointer(nn.Module):
 
 
 			res.append(attn_weights)
+			# attns.append(attn)
 
 		return torch.stack(res).transpose(0,1)
+		# return torch.stack(res).transpose(0,1), attns
 	
 	
 
@@ -112,17 +116,20 @@ class InformedPointer(nn.Module):
 		q = query.unsqueeze(1).repeat(1,p_len,1).view(batch_size*p_len,1,self.rnn_hidden_size)
 		s = word_embedded.view(batch_size*p_len,s_len,self.embedding_dim)
 		# _, informed = self.informed_attn(q, s) #hidden or selected? # single head
-		informed = self.informed_attn(q, s, sent_mask)[0] #hidden or selected?
+		outinf = self.informed_attn(q, s, sent_mask)#hidden or selected?
+		informed = outinf[0] 
 		informed = informed.view(batch_size,p_len,self.embedding_dim)
 		return informed
+		# return informed, outinf[1]
 
 	def add_informed(self, query, word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len):
 		informed = self.just_informed(query, word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len)
+		# informed, attn = self.just_informed(query, word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len)
 		# g = torch.sigmoid(self.info_score(informed)+self.sent_score(sent_embedded))
 		g = torch.sigmoid(self.info_score(torch.cat((informed,sent_embedded),-1)))
 		informed = self.informed_layernorm(g*informed+(1-g)*sent_embedded)
-		# informed = self.info_score(torch.cat((informed,sent_embedded),-1))
 		return informed
+		# return informed, attn
 	
 	def cat_informed(self, query, word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len):
 		informed = self.just_informed(query, word_embedded, sent_embedded ,sent_mask, batch_size, p_len, s_len)

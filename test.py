@@ -55,7 +55,7 @@ elif args.Dataset == 'nips':
 elif args.Dataset == 'arxiv':
 	testset = data.ArXiv('../AbstractData/ArXiv/test.txt')
 elif args.Dataset == 'nfs':
-	trainset = data.NFS('../AbstractData/NFS/dataset/test/')
+	testset = data.NFS('../AbstractData/NFS/dataset/test/')
 
 path = args.Path
 

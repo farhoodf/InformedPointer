@@ -45,6 +45,7 @@ class FromBert(nn.Module):
 		word_embedded = self.word_drop(word_embedded)
 
 		sent_embedded = self.sentence_encoder(word_embedded, mask=sent_mask)
+		# sent_embedded, weights = self.sentence_encoder(word_embedded, mask=sent_mask)
 		sent_embedded = self.sent_drop(sent_embedded)
 
 
@@ -58,6 +59,7 @@ class FromBert(nn.Module):
 		out = self.pointer(parag_embedded, sent_embedded, word_embedded, sent_mask, p_lengths, labels)
 
 		return out
+		# return out, weights
 
 	def _init_weights(self,):
 		self.dense.apply(xavier_init_weights)
