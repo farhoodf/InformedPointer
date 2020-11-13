@@ -2,8 +2,8 @@
 token_config={
 	'unknown' : '__unk__',
 	'pad_token': '__pad__',
-	'first_sent':'begin',
-	'last_sent':'end'
+	'first_sent':'__start__',
+	'last_sent':'__end__'
 }
 
 

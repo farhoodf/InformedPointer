@@ -52,7 +52,7 @@ my_parser.add_argument('--pointer_drop',
 my_parser.add_argument('--rnn_dropout',
 						type=float,
 						help='dropout for pointer rnns',
-						default=0.2
+						default=0.1
 						)
 
 my_parser.add_argument('--word_encoder_drop',
@@ -71,12 +71,12 @@ my_parser.add_argument('--informed_type',
 my_parser.add_argument('--batch_size',
 						type=int,
 						help='pointer type: informed or notinformed',
-						default=4
+						default=8
 						)
 my_parser.add_argument('--val_batch_size',
 						type=int,
 						help='pointer type: informed or notinformed',
-						default=4
+						default=8
 						)
 my_parser.add_argument('--prepath',
 						type=str,

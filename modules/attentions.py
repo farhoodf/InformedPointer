@@ -229,7 +229,7 @@ class TransformerDecoderBlock(nn.Module):
 
 		output = (ffn_output,)
 		if self.output_attentions:
-			output =  output + (sa_weights,)
+			output = (sa_weights,) + output
 		return output
 
 class TransformerEncoder(nn.Module):

@@ -54,13 +54,12 @@ elif args.Dataset == 'nips':
 	testset = data.NIPS('../AbstractData/NIPS/fromnseg/test.lower')
 elif args.Dataset == 'arxiv':
 	testset = data.ArXiv('../AbstractData/ArXiv/test.txt')
-elif args.Dataset == 'nfs':
-	testset = data.NFS('../AbstractData/NFS/dataset/test/')
+elif args.Dataset == 'nsf':
+	testset = data.NSF('../AbstractData/NSF/dataset/test/',maxp=40)
 
 path = args.Path
 
 testloader = DataLoader(testset,batch_size=1,collate_fn=data.batchify,shuffle=False)
-
 
 # conf = config.FromBertConfig()
 conf = config.FromBertConfig(

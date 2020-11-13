@@ -35,15 +35,16 @@ elif args.Dataset == 'roc':
 	trainset = data.ROC('../AbstractData/ROCStory/ROC_train.csv')
 	valset = data.ROC('../AbstractData/ROCStory/ROC_val.csv')
 elif args.Dataset == 'nips':
-	trainset = data.NIPS('../AbstractData/NIPS/fromnseg/train.lower')
-	valset = data.NIPS('../AbstractData/NIPS/fromnseg/val.lower')
+	trainset = data.NIPS('../AbstractData/NIPS/fromnseg/train.lower',maxp=15)
+	valset = data.NIPS('../AbstractData/NIPS/fromnseg/val.lower',maxp=15)
 elif args.Dataset == 'arxiv':
-	trainset = data.ArXiv('../AbstractData/ArXiv/train.txt',maxp=20)
-	valset = data.ArXiv('../AbstractData/ArXiv/valid.txt',maxp=20)
-elif args.Dataset == 'nfs':
-	trainset = data.NFS('../AbstractData/NFS/dataset/train/',maxp=15)
-	valset = data.NFS('../AbstractData/NFS/dataset/val/',maxp=15)
+	trainset = data.ArXiv('../AbstractData/ArXiv/ntrain.txt',maxp=20)
+	valset = data.ArXiv('../AbstractData/ArXiv/nvalid.txt',maxp=20)
+elif args.Dataset == 'nsf':
+	trainset = data.NSF('../AbstractData/NSF/dataset/train/',maxp=20)
+	valset = data.NSF('../AbstractData/NSF/dataset/val/',maxp=20)
 
+print(len(trainset),flush=True)
 
 # trainset = data.Synthetic('../AbstractData/synthetic/train_l1.txt')
 # valset = data.Synthetic('../AbstractData/synthetic/val_l1.txt')
@@ -129,14 +130,14 @@ for i in range(1,3):
 
 
 
-new_params = [
+all_params = [
 
 	{'params':params,'correct_bias':True},
 	{'params':model.word_encoder.parameters(),'correct_bias':True, 'lr':0.00001}
 
 ]
 
-optim = AdamW(new_params, lr=0.0001 ) 
+optim = AdamW(all_params, lr=0.0001 ) 
 scheduler = ReduceLROnPlateau(optim, 'min', factor=0.5, patience=0, verbose=True)
 # lambda1 = lambda epoch: 0.5**epoch
 # scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda1)

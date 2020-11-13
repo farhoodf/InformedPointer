@@ -9,14 +9,13 @@ import pandas as pd
 # from multiprocessing import Pool
 import re
 alphaRegex = re.compile('[^a-zA-Z,.]')
-regex_formula = re.compile("\$(.*?)\$")
-
+# citation = re.compile(r'\(.*?[\d]+.*?\)')
+citation = re.compile('([\(\[\{]).*?([\)\]\}])')
 from transformers import BertTokenizer, DistilBertTokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 # tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-cased')
 # from allennlp.modules.elmo import batch_to_ids
 
-from multiprocessing import Pool
 
 class AbstractData(Dataset):
 	"""docstring for AbstractData"""
@@ -48,7 +47,7 @@ class AbstractData(Dataset):
 			self.data[idx]['s_len'] = slens
 			self.data[idx]['vectors'] = sent_ids
 			return self.data[idx]
-	
+
 	def tokenize(self, tokenizer):
 		for i in range(len(self.data)):
 			self.data[i]['s_len'] = []
@@ -65,6 +64,7 @@ class AbstractData(Dataset):
 				for k in range(self.data[i]['s_len'][j]):
 					self.data[i]['vectorized'][j].append(w_to_id.get(self.data[i]['text'][j][k],w_to_id[token_config['unknown']]))
 				self.data[i]['vectorized'][j] = torch.tensor(self.data[i]['vectorized'][j])
+
 class SIND(AbstractData):
 	"""docstring for SIND"""
 	def __init__(self, path, tokenizer=None, w_to_id=None,extra=False):
@@ -109,7 +109,8 @@ class ROC(AbstractData):
 
 class NIPS(AbstractData):
 	"""docstring for NIPS"""
-	def __init__(self, path, tokenizer=None, w_to_id=None):
+	def __init__(self, path, tokenizer=None, w_to_id=None, maxp=100):
+		self.maxp = maxp
 		super(NIPS, self).__init__(path, tokenizer, w_to_id)
 	
 	def __load_data__(self):
@@ -117,18 +118,39 @@ class NIPS(AbstractData):
 			raw = f.readlines()
 		for i in range(len(raw)):
 			sample = raw[i].strip().split('<eos>')
+			if len(sample) > self.maxp:
+				continue
+			check = False
 			sample = [sent.strip() for sent in sample]
-			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
+			# sample = [re.sub(' +', ' ',alphaRegex.sub(' ',sent.strip())) for sent in sample]
+			sample = [re.sub(' +', ' ',citation.sub(' ',sent.strip())) for sent in sample]
+			sent_ids = []
+			slens = []
+			new_sample = []
+			for i in range(len(sample)):
+				tokenized = tokenizer.encode(sample[i])
+				if len(tokenized) > 250:
+					check = True
+					break
+				if len(tokenized) < 4:
+					continue
+				sent_ids.append(tokenized)
+				slens.append(len(sent_ids[-1]))
+				new_sample.append(sample[i])
+			sample = new_sample
+				
+			if check:
+				continue
 			labels = list(range(len(sample)))
-			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
+			self.data.append({'text':sample,'labels':labels,'p_len':len(labels),'s_len':slens,'vectors':sent_ids})
 
-		# self.data = self.data[:1000]
+		# self.data = self.data[:1500]
 
-class NFS(AbstractData):
-	"""docstring for NFS"""
+class NSF(AbstractData):
+	"""docstring for NSF"""
 	def __init__(self, path, tokenizer=None, w_to_id=None, maxp=100):
 		self.maxp = maxp
-		super(NFS, self).__init__(path, tokenizer, w_to_id)
+		super(NSF, self).__init__(path, tokenizer, w_to_id)
 	
 	def __load_data__(self):
 		fnames = os.listdir(self.path)
@@ -139,67 +161,17 @@ class NFS(AbstractData):
 				continue
 			check = False
 			sample = [sent.strip() for sent in sample]
-			for sent in sample:
-				if len(sent.split()) > 100:
+			sent_ids = []
+			slens = []
+			for i in range(len(sample)):
+				sent_ids.append(tokenizer.encode(sample[i]))
+				slens.append(len(sent_ids[-1]))
+				if slens[-1] > 450:
 					check = True
 			if check:
 				continue
-			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
 			labels = list(range(len(sample)))
-			self.data.append({'text':sample,'labels':labels,'p_len':len(labels),'fname':fname})
-
-		# self.data = self.data[:1000]
-
-# def read_pool(doc):
-# 	sentences = doc.split('\n')[2:]
-# 	l = len(sentences)
-# 	if l > 1:
-# 		# sample = [nltk.word_tokenize(sent) for sent in sentences]
-# 		# sample = [tokenizer.encode(regex_formula.sub(' ',sent)) for sent in sentences]
-# 		sentences = [regex_formula.sub('frm',sent) for sent in sentences]
-# 		sentences = [alphaRegex.sub(' ',sent) for sent in sentences]
-
-# 		sample = [tokenizer.encode(sent) for sent in sentences]
-# 		# sample = [sent.split() for sent in sentences]
-# 		# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
-		
-# 		sent_len = []
-# 		for i in range(len(sample)):
-# 			# sentences[i] = prep(sentences[i].strip().lower()).split()
-# 			# if len(sample[i]) < 1:
-# 			# 	sample[i] = ['__unk__']
-# 			# 	print(sample)
-# 			sent_len.append(len(sample[i]))
-# 		labels = list(range(len(sample)))		
-
-# 		return {'text':sample,'labels':labels,'s_lengths':sent_len,'p_len':len(labels),'max_sent_len':max(sent_len)}
-
-# class ArXiv(AbstractData):
-# 	"""docstring for ArXiv"""
-# 	def __init__(self, path, tokenizer=None, w_to_id=None, maxp=None):
-# 		self.maxp = maxp
-# 		super(ArXiv, self).__init__(path, tokenizer, w_to_id)
-	
-# 	def __load_data__(self):
-
-# 		with open(self.path,'r') as f:
-# 			raw = f.read()
-# 		docs = raw.split('\n\n')
-
-# 		with Pool(4) as p:
-# 			self.data = [x for x in p.imap(read_pool, docs) if x is not None]
-		# for i in range(len(docs)):
-		# 	sentences = docs[i].split('\n')[2:]
-		# 	# if len(sentences) < 2:
-		# 	# 	continue
-		# 	if self.maxp is not None:
-		# 		if len(sentences) > self.maxp:
-		# 			continue
-		# 	sample = [sent.strip() for sent in sentences]
-
-		# 	# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
-		# 	labels = list(range(len(sample)))
-		# 	self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
+			self.data.append({'text':sample,'labels':labels,'p_len':len(labels),'fname':fname,'s_len':slens,'vectors':sent_ids})
 
 		# self.data = self.data[:1500]
 
@@ -216,24 +188,21 @@ class ArXiv(AbstractData):
 		docs = raw.split('\n\n')
 
 		for i in range(len(docs)):
-			sentences = docs[i].split('\n')[2:]
+			sentences = docs[i].split('\n')
 			if len(sentences) < 2:
 				continue
 			# if self.maxp is not None:
 			if len(sentences) > self.maxp:
 				continue
-			sample = [re.sub(' +', ' ',alphaRegex.sub(' ',sent.strip())) for sent in sentences]
-			# too_long = False
-			# for j in range(len(sample)):
-			# 	l = len(sample[j].split())
-			# 	if (l > 150) or (l < 2):
-			# 		too_long = True
-			# if too_long:
-			# 	continue
+			sample = [sent.strip() for sent in sentences]
 
 			# sample = [[conf['first_sent']]] + sample + [[conf['last_sent']]]
 			labels = list(range(len(sample)))
 			self.data.append({'text':sample,'labels':labels,'p_len':len(labels)})
+
+		# self.data = self.data[:1500]
+
+
 
 class Synthetic(AbstractData):
 	"""docstring for Synthetic"""
@@ -305,6 +274,7 @@ def batchify(batch):
 
 	return {'data':padded_data,'s_lengths':padded_lengths, 'labels': padded_labels,
 			'p_lengths':torch.tensor(p_lens), 'text':text}
+
 
 def bert_batchify(batch):
 

@@ -73,6 +73,8 @@ class InformedPointer(nn.Module):
 			# 	do_mask = True
 		else:
 			do_tf = False
+		if labels is None:
+			do_tf = False
 		do_mask = True
 
 		res = []
